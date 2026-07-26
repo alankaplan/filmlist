@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from .db import Database, DEFAULT_DB_PATH
+from .fetch import FetchError, FESTIVAL_AWARD_LABELS, fetch_all_awards, fetch_award_winners
 from .generate import write_html
 from .models import Film, FESTIVALS
 
@@ -68,6 +69,28 @@ def cmd_delete(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_pull_awards(args: argparse.Namespace) -> int:
+    try:
+        if args.festival:
+            films = fetch_award_winners(args.festival, since=args.since)
+        else:
+            films = fetch_all_awards(since=args.since)
+    except FetchError as exc:
+        print(f"Fetch failed: {exc}", file=sys.stderr)
+        return 1
+
+    if not films:
+        print("No winners returned from Wikidata.")
+        return 0
+
+    with Database(args.db) as db:
+        # merge=True fills only blank fields, protecting curated data.
+        db.add_many(films, merge=True)
+    scope = args.festival or "all mapped festivals"
+    print(f"Pulled {len(films)} award winner(s) for {scope} into {args.db}")
+    return 0
+
+
 def cmd_generate(args: argparse.Namespace) -> int:
     with Database(args.db) as db:
         films = db.all()
@@ -112,6 +135,20 @@ def build_parser() -> argparse.ArgumentParser:
     dp = sub.add_parser("delete", help="Delete a film by id")
     dp.add_argument("id", type=int)
     dp.set_defaults(func=cmd_delete)
+
+    pp = sub.add_parser(
+        "pull-awards",
+        help="Fetch festival award winners from Wikidata and merge them in",
+    )
+    pp.add_argument(
+        "--festival",
+        choices=sorted(FESTIVAL_AWARD_LABELS),
+        help="Limit to one festival (default: all mapped festivals)",
+    )
+    pp.add_argument(
+        "--since", type=int, help="Only fetch winners from this year onward"
+    )
+    pp.set_defaults(func=cmd_pull_awards)
 
     gp = sub.add_parser("generate", help="Generate the HTML page")
     gp.add_argument(

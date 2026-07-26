@@ -48,21 +48,39 @@ class Database:
         self.conn.close()
 
     # -- writes ----------------------------------------------------------
-    def add(self, film: Film) -> int:
+    # Overwrite every field with the incoming values.
+    _UPSERT_OVERWRITE = """
+        director = excluded.director,
+        country  = excluded.country,
+        section  = excluded.section,
+        award    = excluded.award,
+        synopsis = excluded.synopsis
+    """
+
+    # Fill only fields that are currently blank, preserving curated data.
+    _UPSERT_MERGE = """
+        director = CASE WHEN films.director = '' THEN excluded.director ELSE films.director END,
+        country  = CASE WHEN films.country  = '' THEN excluded.country  ELSE films.country  END,
+        section  = CASE WHEN films.section  = '' THEN excluded.section  ELSE films.section  END,
+        award    = CASE WHEN films.award    = '' THEN excluded.award    ELSE films.award    END,
+        synopsis = CASE WHEN films.synopsis = '' THEN excluded.synopsis ELSE films.synopsis END
+    """
+
+    def add(self, film: Film, merge: bool = False) -> int:
         """Insert a film, returning its id. Existing (title, year, festival)
-        rows are updated in place so re-running the seed is idempotent."""
+        rows are updated in place so re-running the seed is idempotent.
+
+        With ``merge=True`` only blank columns on the existing row are filled,
+        so an automated fetch never overwrites hand-curated data."""
+        set_clause = self._UPSERT_MERGE if merge else self._UPSERT_OVERWRITE
         cur = self.conn.execute(
-            """
+            f"""
             INSERT INTO films (title, year, festival, director, country,
                                section, award, synopsis)
             VALUES (:title, :year, :festival, :director, :country,
                     :section, :award, :synopsis)
             ON CONFLICT(title, year, festival) DO UPDATE SET
-                director = excluded.director,
-                country  = excluded.country,
-                section  = excluded.section,
-                award    = excluded.award,
-                synopsis = excluded.synopsis
+            {set_clause}
             """,
             film.to_dict(),
         )
@@ -75,10 +93,10 @@ class Database:
         ).fetchone()
         return row["id"]
 
-    def add_many(self, films: Iterable[Film]) -> int:
+    def add_many(self, films: Iterable[Film], merge: bool = False) -> int:
         count = 0
         for film in films:
-            self.add(film)
+            self.add(film, merge=merge)
             count += 1
         return count
 

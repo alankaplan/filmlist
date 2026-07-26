@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from filmlist.db import Database
+from filmlist.fetch import _parse_results, build_query, fetch_award_winners
 from filmlist.generate import render_html
 from filmlist.models import Film
 
@@ -97,6 +98,67 @@ def test_render_html_escapes():
 def test_render_html_empty():
     html = render_html([])
     assert "No films yet" in html
+
+
+def _binding(title, year, directors="", countries=""):
+    b = {"filmLabel": {"value": title}, "year": {"value": str(year)}}
+    if directors:
+        b["directors"] = {"value": directors}
+    if countries:
+        b["countries"] = {"value": countries}
+    return b
+
+
+SAMPLE_SPARQL = {
+    "results": {
+        "bindings": [
+            _binding("Anora", 2024, "Sean Baker", "United States"),
+            _binding("Parasite", 2019, "Bong Joon-ho", "South Korea"),
+            _binding("", 2020),          # missing title -> skipped
+            _binding("No Year Film", ""),  # missing year -> skipped
+        ]
+    }
+}
+
+
+def test_build_query_includes_label_and_since():
+    q = build_query("Palme d'Or", since=2020)
+    assert '"Palme d\'Or"@en' in q
+    assert "FILTER(?year >= 2020)" in q
+
+
+def test_parse_results_skips_incomplete_rows():
+    films = _parse_results(SAMPLE_SPARQL, "Cannes", "Palme d'Or")
+    titles = [f.title for f in films]
+    assert titles == ["Anora", "Parasite"]
+    assert films[0].festival == "Cannes"
+    assert films[0].award == "Palme d'Or"
+    assert films[0].director == "Sean Baker"
+
+
+def test_fetch_award_winners_with_injected_fetcher():
+    def fake_fetch(endpoint, params):
+        assert "query" in params
+        return SAMPLE_SPARQL
+
+    films = fetch_award_winners("Cannes", fetcher=fake_fetch)
+    assert {f.title for f in films} == {"Anora", "Parasite"}
+
+
+def test_merge_preserves_curated_fields(tmp_path):
+    with Database(tmp_path / "t.db") as db:
+        # Curated row with a hand-written synopsis and section.
+        db.add(make_film(title="Anora", year=2024,
+                         synopsis="Hand-written.", section="Competition"))
+        # Fetched row (merge) has a director but blank synopsis/section.
+        fetched = Film(title="Anora", year=2024, festival="Cannes",
+                       director="Sean Baker", country="USA", award="Palme d'Or")
+        db.add(fetched, merge=True)
+        got = db.all()[0]
+        assert got.synopsis == "Hand-written."   # preserved
+        assert got.section == "Competition"       # preserved
+        assert got.director == "Sean Baker"       # filled from fetch
+        assert got.award == "Palme d'Or"          # filled from fetch
 
 
 def test_seed_file_is_valid():
