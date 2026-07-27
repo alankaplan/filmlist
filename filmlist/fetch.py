@@ -21,6 +21,7 @@ import urllib.request
 from typing import Callable, Optional
 
 from .models import Film
+from .tagging import age_tags
 
 WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
 WIKIPEDIA_API = "https://en.wikipedia.org/w/api.php"
@@ -165,6 +166,8 @@ def _parse_results(data: dict, festival: str, year: int) -> tuple[list[Film], di
             )
         except ValueError:
             continue
+        # Auto age-appropriateness tags, derived from the film's genres.
+        film.tags = ", ".join(age_tags(film.genres))
         idx = len(films)
         films.append(film)
         article = _title_from_article(binding.get("article", {}).get("value", ""))

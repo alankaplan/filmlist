@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS films (
     section  TEXT    NOT NULL DEFAULT '',
     award    TEXT    NOT NULL DEFAULT '',
     synopsis TEXT    NOT NULL DEFAULT '',
+    tags     TEXT    NOT NULL DEFAULT '',
     -- Provenance: 'pull' = fetched by the automated pull system,
     -- 'manual' = entered by hand. The HTML output shows 'pull' only.
     source   TEXT    NOT NULL DEFAULT 'manual',
@@ -38,6 +39,7 @@ class Database:
     _MIGRATIONS = {
         "genre": "ALTER TABLE films ADD COLUMN genre TEXT NOT NULL DEFAULT ''",
         "source": "ALTER TABLE films ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'",
+        "tags": "ALTER TABLE films ADD COLUMN tags TEXT NOT NULL DEFAULT ''",
     }
 
     def __init__(self, path: Path | str = DEFAULT_DB_PATH):
@@ -79,6 +81,7 @@ class Database:
         section  = excluded.section,
         award    = excluded.award,
         synopsis = excluded.synopsis,
+        tags     = excluded.tags,
         source   = excluded.source
     """
 
@@ -90,6 +93,7 @@ class Database:
         section  = CASE WHEN films.section  = '' THEN excluded.section  ELSE films.section  END,
         award    = CASE WHEN films.award    = '' THEN excluded.award    ELSE films.award    END,
         synopsis = CASE WHEN films.synopsis = '' THEN excluded.synopsis ELSE films.synopsis END,
+        tags     = CASE WHEN films.tags     = '' THEN excluded.tags     ELSE films.tags     END,
         source   = excluded.source
     """
 
@@ -106,9 +110,9 @@ class Database:
         cur = self.conn.execute(
             f"""
             INSERT INTO films (title, year, festival, director, country,
-                               genre, section, award, synopsis, source)
+                               genre, section, award, synopsis, tags, source)
             VALUES (:title, :year, :festival, :director, :country,
-                    :genre, :section, :award, :synopsis, :source)
+                    :genre, :section, :award, :synopsis, :tags, :source)
             ON CONFLICT(title, year, festival) DO UPDATE SET
             {set_clause}
             """,
@@ -137,6 +141,12 @@ class Database:
         self.conn.commit()
         return cur.rowcount > 0
 
+    def set_tags(self, film_id: int, tags: str) -> None:
+        self.conn.execute(
+            "UPDATE films SET tags = ? WHERE id = ?", (tags, film_id)
+        )
+        self.conn.commit()
+
     # -- reads -----------------------------------------------------------
     def _row_to_film(self, row: sqlite3.Row) -> Film:
         return Film(
@@ -150,6 +160,7 @@ class Database:
             section=row["section"],
             award=row["award"],
             synopsis=row["synopsis"],
+            tags=row["tags"],
         )
 
     def all(

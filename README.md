@@ -6,8 +6,12 @@ festivals and generates a self-contained, filterable HTML page from it.
 Every film shown on the page is fetched automatically from **Wikidata** (with
 plot summaries from **Wikipedia**) — nothing is hand-authored. It covers award
 winners from **Cannes, Venice, Berlin, Sundance, SXSW, Toronto, Locarno,** and
-**San Sebastián**, and the generated page can be filtered by **festival, year,
-and genre**.
+**San Sebastián**. The generated page has **additive, multi-select filters**
+for **festival, year, genre, and tags** — pick several values in a filter to
+widen the results, and combine filters to narrow them.
+
+Every film is also **auto-tagged for age appropriateness** (for a 5- and a
+12-year-old) based on its genres.
 
 ## Requirements
 
@@ -45,8 +49,27 @@ All commands share an optional `--db PATH` flag (defaults to `filmlist.db`).
 | `pull YEAR [--festival F]` | Fetch that year's award winners from Wikidata (one year per run). |
 | `list [--festival F] [--year Y] [--include-manual]` | List films (pulled only by default). |
 | `add TITLE YEAR FESTIVAL [options]` | Add a film by hand (excluded from the page unless `--include-manual`). |
+| `retag` | Recompute automatic age tags for every film from its genres. |
 | `delete ID` | Remove a film by its id. |
 | `generate [-o OUTPUT] [--include-manual]` | Render the database to an HTML page. |
+
+### Tags and age appropriateness
+
+Every pulled (and hand-added) film is automatically tagged for age
+appropriateness from its genres:
+
+| Tag | Meaning |
+| --- | --- |
+| `OK for 5` | Suitable for a 5-year-old (kid-friendly genres — animation, family). Also implies `OK for 12`. |
+| `OK for 12` | Suitable for a 12-year-old (general genres — drama, comedy, documentary). |
+| `16+` | Mature themes, or genre unknown (conservative default). |
+| `18+` | Explicitly adult genres. |
+
+The tags are a transparent heuristic in `filmlist/tagging.py` — a rough
+automated estimate, not an official rating. Adjust the genre keyword lists
+there to tune it, then run `python main.py retag` to recompute existing rows.
+You can also attach your own tags to a hand-added film with
+`add ... --tags "must-watch, rewatch"`; the age tags are added on top.
 
 ### Pulling award winners
 
@@ -84,10 +107,11 @@ Notes:
 ```
 filmlist/
   __init__.py
-  models.py      # Film dataclass (incl. genre) + festival list & validation
-  db.py          # SQLite persistence (source tracking, merge/overwrite upserts)
+  models.py      # Film dataclass (incl. genre, tags) + festival list & validation
+  db.py          # SQLite persistence (source tracking, migrations, upserts)
   fetch.py       # Wikidata award fetcher + Wikipedia summary enrichment
-  generate.py    # HTML page renderer with festival/year/genre filters
+  tagging.py     # automatic age-appropriateness tagging from genres
+  generate.py    # HTML page renderer with additive festival/year/genre/tag filters
   cli.py         # argparse command-line interface
 tests/           # pytest suite
 main.py          # entry point

@@ -9,6 +9,7 @@ from .db import Database, DEFAULT_DB_PATH
 from .fetch import FetchError, FESTIVAL_AWARDS, fetch_all_awards, fetch_award_winners
 from .generate import write_html
 from .models import Film, FESTIVALS
+from .tagging import age_tags
 
 
 def cmd_add(args: argparse.Namespace) -> int:
@@ -23,6 +24,9 @@ def cmd_add(args: argparse.Namespace) -> int:
         award=args.award or "",
         synopsis=args.synopsis or "",
     )
+    # Combine automatic age tags with any user-supplied tags.
+    manual = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
+    film.tags = ", ".join(dict.fromkeys(age_tags(film.genres) + manual))
     with Database(args.db) as db:
         film_id = db.add(film, source="manual")
     print(f"Added [{film_id}] {film.title} ({film.year}) — {film.festival}")
@@ -74,6 +78,20 @@ def cmd_delete(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_retag(args: argparse.Namespace) -> int:
+    """Recompute automatic age tags for every film from its genres."""
+    with Database(args.db) as db:
+        films = db.all()
+        for f in films:
+            auto = age_tags(f.genres)
+            # Preserve any non-age tags already present.
+            from .tagging import AGE_TAGS
+            kept = [t for t in f.tag_list if t not in AGE_TAGS]
+            db.set_tags(f.id, ", ".join(dict.fromkeys(auto + kept)))
+    print(f"Re-tagged {len(films)} film(s).")
+    return 0
+
+
 def cmd_generate(args: argparse.Namespace) -> int:
     # By default the page shows only automatically pulled films.
     source = None if args.include_manual else "pull"
@@ -121,6 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--section")
     ap.add_argument("--award")
     ap.add_argument("--synopsis")
+    ap.add_argument("--tags", help="Extra comma-separated tags (age tags are added automatically)")
     ap.set_defaults(func=cmd_add)
 
     lp = sub.add_parser("list", help="List films")
@@ -136,6 +155,11 @@ def build_parser() -> argparse.ArgumentParser:
     dp = sub.add_parser("delete", help="Delete a film by id")
     dp.add_argument("id", type=int)
     dp.set_defaults(func=cmd_delete)
+
+    rp = sub.add_parser(
+        "retag", help="Recompute automatic age tags for all films from genres"
+    )
+    rp.set_defaults(func=cmd_retag)
 
     gp = sub.add_parser("generate", help="Generate the HTML page")
     gp.add_argument(

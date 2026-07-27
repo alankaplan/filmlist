@@ -34,12 +34,18 @@ class Film:
     section: str = ""       # e.g. "Competition", "Un Certain Regard"
     award: str = ""         # e.g. "Palme d'Or", "Golden Lion"
     synopsis: str = ""
+    tags: str = ""          # comma-separated, e.g. "OK for 12, Cannes pick"
     id: Optional[int] = None
 
     @property
     def genres(self) -> list[str]:
         """The genre string split into individual, trimmed labels."""
         return [g.strip() for g in self.genre.split(",") if g.strip()]
+
+    @property
+    def tag_list(self) -> list[str]:
+        """The tag string split into individual, trimmed labels."""
+        return [t.strip() for t in self.tags.split(",") if t.strip()]
 
     def __post_init__(self) -> None:
         self.title = self.title.strip()

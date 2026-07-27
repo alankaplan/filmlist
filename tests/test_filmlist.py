@@ -13,6 +13,7 @@ from filmlist.fetch import (
 )
 from filmlist.generate import render_html
 from filmlist.models import Film
+from filmlist.tagging import AGE_5, AGE_12, AGE_16, AGE_18, age_tags
 
 
 def make_film(**kw) -> Film:
@@ -46,6 +47,39 @@ def test_genres_property_splits_and_trims():
     f = make_film(genre="Drama,  Thriller , Comedy")
     assert f.genres == ["Drama", "Thriller", "Comedy"]
     assert make_film(genre="").genres == []
+
+
+def test_tag_list_property():
+    assert make_film(tags="OK for 12, Cannes pick").tag_list == ["OK for 12", "Cannes pick"]
+    assert make_film(tags="").tag_list == []
+
+
+# --- tagging --------------------------------------------------------------
+def test_age_tags_kid_friendly():
+    assert age_tags(["Animation"]) == [AGE_5, AGE_12]
+    assert age_tags(["Family film", "Comedy"]) == [AGE_5, AGE_12]
+
+
+def test_age_tags_tween():
+    assert age_tags(["Drama"]) == [AGE_12]
+    assert age_tags(["Documentary"]) == [AGE_12]
+
+
+def test_age_tags_mature_and_adult():
+    assert age_tags(["Horror"]) == [AGE_16]
+    assert age_tags(["War film"]) == [AGE_16]
+    assert age_tags(["Erotic thriller"]) == [AGE_18]
+
+
+def test_age_tags_unknown_is_conservative():
+    # An unrecognised genre is treated as mature, never kid-safe.
+    assert age_tags(["Avant-garde"]) == [AGE_16]
+    assert age_tags([]) == [AGE_16]
+
+
+def test_age_tags_adult_beats_kid():
+    # A mix containing an adult signal is not marked kid-friendly.
+    assert age_tags(["Animation", "Pornographic film"]) == [AGE_18]
 
 
 # --- database -------------------------------------------------------------
@@ -190,6 +224,8 @@ def test_fetch_award_winners_enriches_with_summary():
     films = fetch_award_winners("Cannes", 2024, fetcher=fake_fetch)
     assert len(films) == 1
     assert films[0].synopsis.startswith("Anora is a 2024 film")
+    # Pulled films are auto-tagged for age from their genres (Comedy, Drama).
+    assert films[0].tags == AGE_12
 
 
 def test_fetch_summaries_resolves_redirects():
@@ -204,21 +240,23 @@ def test_fetch_summaries_resolves_redirects():
 
 
 # --- html rendering -------------------------------------------------------
-def test_render_html_has_three_filters_and_genre_data():
+def test_render_html_has_four_multiselect_facets_and_data():
     films = [
         make_film(title="Anora", festival="Cannes", year=2024,
-                  genre="Comedy, Drama", award="Palme d'Or"),
-        make_film(title="Joker", festival="Venice", year=2019, genre="Thriller"),
+                  genre="Comedy, Drama", award="Palme d'Or", tags="OK for 12"),
+        make_film(title="Joker", festival="Venice", year=2019, genre="Thriller",
+                  tags="16+"),
     ]
     html = render_html(films)
-    assert 'id="f-festival"' in html
-    assert 'id="f-year"' in html
-    assert 'id="f-genre"' in html
+    for dim in ("festival", "year", "genre", "tags"):
+        assert f'data-dim="{dim}"' in html
+    # Card data attributes drive the additive client-side filter.
     assert 'data-genre="Comedy|Drama"' in html
+    assert 'data-tags="OK for 12"' in html
     assert 'data-year="2024"' in html
-    # Genre and year options are populated from the data.
-    assert "<option value=\"Comedy\">Comedy</option>" in html
-    assert "<option value=\"2024\">2024</option>" in html
+    # Facet chips are populated from the data.
+    assert '<button class="chip" data-val="Comedy">Comedy</button>' in html
+    assert '<button class="chip" data-val="16+">16+</button>' in html
 
 
 def test_render_html_escapes():
