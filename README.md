@@ -1,27 +1,39 @@
 # filmlist
 
 A small app that maintains a database of movies from major international film
-festivals and generates a self-contained HTML page from it.
+festivals and generates a self-contained, filterable HTML page from it.
 
-It tracks award winners and notable premieres from **Cannes, Venice, Berlin,
-Sundance, Toronto, Locarno, San Sebastián,** and **Telluride**, and renders them
-into a filterable, dependency-free web page.
+Every film shown on the page is fetched automatically from **Wikidata** (with
+plot summaries from **Wikipedia**) — nothing is hand-authored. It covers award
+winners from **Cannes, Venice, Berlin, Sundance, SXSW, Toronto, Locarno,** and
+**San Sebastián**, and the generated page can be filtered by **festival, year,
+and genre**.
 
 ## Requirements
 
 - Python 3.9+ (standard library only — SQLite ships with Python)
+- Outbound HTTPS to `query.wikidata.org` and `en.wikipedia.org` for `pull`
 - `pytest` only if you want to run the tests
 
 ## Quick start
 
 ```bash
-# 1. Load the bundled seed data (real festival winners) into a local SQLite DB
-python main.py seed
+# 1. Pull a year's festival award winners into a local SQLite DB
+python main.py pull 2023
 
-# 2. Generate the HTML page
+# 2. Generate the HTML page (shows only pulled films)
 python main.py generate -o index.html
 
 # 3. Open index.html in your browser
+```
+
+Pull the years you care about (one per run) before generating:
+
+```bash
+python main.py pull 2024
+python main.py pull 2023
+python main.py pull 2022 --festival Cannes
+python main.py generate -o index.html
 ```
 
 ## Usage
@@ -30,63 +42,53 @@ All commands share an optional `--db PATH` flag (defaults to `filmlist.db`).
 
 | Command | Description |
 | --- | --- |
-| `seed [--file FILE]` | Load films from a JSON file (defaults to `data/seed.json`). |
-| `add TITLE YEAR FESTIVAL [options]` | Add a single film. |
-| `pull-awards [--festival F] [--since YEAR]` | Fetch award winners from Wikidata and merge them in. |
-| `list [--festival F] [--year Y]` | List films, optionally filtered. |
+| `pull YEAR [--festival F]` | Fetch that year's award winners from Wikidata (one year per run). |
+| `list [--festival F] [--year Y] [--include-manual]` | List films (pulled only by default). |
+| `add TITLE YEAR FESTIVAL [options]` | Add a film by hand (excluded from the page unless `--include-manual`). |
 | `delete ID` | Remove a film by its id. |
-| `generate [-o OUTPUT]` | Render the database to an HTML page (default `index.html`). |
+| `generate [-o OUTPUT] [--include-manual]` | Render the database to an HTML page. |
 
-### Pulling award winners from Wikidata
+### Pulling award winners
 
-The app can populate itself from Wikidata, which records "award received"
-statements on film entities:
+The app populates itself from Wikidata's "award received" statements and
+enriches each film with genre (P136) and a plain-text intro summary from the
+English Wikipedia article:
 
 ```bash
-python main.py pull-awards                      # all mapped festivals
-python main.py pull-awards --festival Cannes    # just the Palme d'Or winners
-python main.py pull-awards --since 2015         # only recent winners
+python main.py pull 2023                    # all mapped festivals, 2023
+python main.py pull 2023 --festival Venice  # just Venice, 2023
 ```
 
 Notes:
 
-- **No API key** is needed, and the query is matched by the award's English
-  label (e.g. *Palme d'Or*, *Golden Lion*, *Golden Bear*), so the mapping in
-  `filmlist/fetch.py` is easy to read and correct.
-- Pulls are **merge-only**: they fill blank fields but never overwrite data
-  you entered by hand, and re-running only adds newly recorded winners.
-- Requires outbound HTTPS access to `query.wikidata.org`. In restricted
-  network environments the command fails with a clear message instead of a
-  traceback.
-- This fetches *award winners*, not full official selections — festival
-  lineups beyond the winners live in Wikipedia tables, which would need a
-  separate, per-festival parser.
-
-### Adding a film
-
-```bash
-python main.py add "Drive My Car" 2021 Cannes \
-    --director "Ryusuke Hamaguchi" \
-    --country Japan \
-    --section "Competition" \
-    --award "Best Screenplay" \
-    --synopsis "A grieving stage director forms a bond with his reserved chauffeur."
-```
-
-Adds are idempotent on `(title, year, festival)`, so re-running the seed or
-re-adding a film simply updates the existing record.
+- **One year per run**, given as a positional argument, so you decide exactly
+  which editions land in the database.
+- **Multiple awards per festival** are pulled (e.g. Cannes' Palme d'Or, Grand
+  Prix, Jury Prize, Best Director, Best Screenplay). The award list lives in
+  `FESTIVAL_AWARDS` in `filmlist/fetch.py` and is easy to extend — awards are
+  matched by English label or alias, case-insensitively.
+- **No API key** is needed.
+- Pulls are **merge-only**: they fill blank fields but never overwrite existing
+  data, and re-running only adds newly recorded winners.
+- The generated page shows **only automatically pulled films**. Hand-added
+  films (`add`) are stored with a `manual` source and omitted unless you pass
+  `--include-manual`.
+- Requires outbound HTTPS. In restricted network environments the command
+  fails with a clear message instead of a traceback.
+- This fetches *award winners*, not full official selections — complete
+  lineups live in Wikipedia tables and would need a separate, per-festival
+  parser.
 
 ## Project layout
 
 ```
 filmlist/
   __init__.py
-  models.py      # Film dataclass + festival list & validation
-  db.py          # SQLite persistence layer (overwrite + merge upserts)
-  fetch.py       # Wikidata award-winner fetcher
-  generate.py    # HTML page renderer
+  models.py      # Film dataclass (incl. genre) + festival list & validation
+  db.py          # SQLite persistence (source tracking, merge/overwrite upserts)
+  fetch.py       # Wikidata award fetcher + Wikipedia summary enrichment
+  generate.py    # HTML page renderer with festival/year/genre filters
   cli.py         # argparse command-line interface
-data/seed.json   # seed dataset of real festival films
 tests/           # pytest suite
 main.py          # entry point
 ```

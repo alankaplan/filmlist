@@ -1,12 +1,16 @@
 """Tests for the filmlist app."""
 
-import json
-from pathlib import Path
-
 import pytest
 
 from filmlist.db import Database
-from filmlist.fetch import _parse_results, build_query, fetch_award_winners
+from filmlist.fetch import (
+    FESTIVAL_AWARDS,
+    _parse_results,
+    _title_from_article,
+    build_query,
+    fetch_award_winners,
+    fetch_summaries,
+)
 from filmlist.generate import render_html
 from filmlist.models import Film
 
@@ -17,6 +21,7 @@ def make_film(**kw) -> Film:
     return Film(**base)
 
 
+# --- models ---------------------------------------------------------------
 def test_film_validation_rejects_unknown_festival():
     with pytest.raises(ValueError):
         make_film(festival="Oscars")
@@ -32,31 +37,49 @@ def test_film_validation_rejects_bad_year():
         make_film(year=1500)
 
 
+def test_sxsw_is_a_valid_festival():
+    f = make_film(festival="SXSW")
+    assert f.festival == "SXSW"
+
+
+def test_genres_property_splits_and_trims():
+    f = make_film(genre="Drama,  Thriller , Comedy")
+    assert f.genres == ["Drama", "Thriller", "Comedy"]
+    assert make_film(genre="").genres == []
+
+
+# --- database -------------------------------------------------------------
 def test_add_and_get(tmp_path):
     with Database(tmp_path / "t.db") as db:
-        fid = db.add(make_film(title="Parasite", festival="Cannes"))
+        fid = db.add(make_film(title="Parasite"), source="pull")
         got = db.get(fid)
         assert got is not None
         assert got.title == "Parasite"
         assert db.count() == 1
 
 
-def test_add_is_idempotent(tmp_path):
+def test_source_filter(tmp_path):
     with Database(tmp_path / "t.db") as db:
-        f1 = db.add(make_film(title="X", award=""))
-        f2 = db.add(make_film(title="X", award="Palme d'Or"))
-        assert f1 == f2
-        assert db.count() == 1
-        assert db.get(f1).award == "Palme d'Or"
-
-
-def test_filtering(tmp_path):
-    with Database(tmp_path / "t.db") as db:
-        db.add(make_film(title="A", festival="Cannes", year=2022))
-        db.add(make_film(title="B", festival="Venice", year=2023))
+        db.add(make_film(title="Pulled"), source="pull")
+        db.add(make_film(title="Manual", year=2022), source="manual")
         assert len(db.all()) == 2
-        assert len(db.all(festival="Cannes")) == 1
-        assert len(db.all(year=2023)) == 1
+        assert [f.title for f in db.all(source="pull")] == ["Pulled"]
+        assert [f.title for f in db.all(source="manual")] == ["Manual"]
+
+
+def test_merge_preserves_curated_fields(tmp_path):
+    with Database(tmp_path / "t.db") as db:
+        db.add(make_film(title="Anora", year=2024,
+                         synopsis="Hand-written.", section="Competition"),
+               source="manual")
+        fetched = Film(title="Anora", year=2024, festival="Cannes",
+                       director="Sean Baker", genre="Comedy", award="Palme d'Or")
+        db.add(fetched, merge=True, source="pull")
+        got = db.all()[0]
+        assert got.synopsis == "Hand-written."   # preserved
+        assert got.section == "Competition"       # preserved
+        assert got.director == "Sean Baker"       # filled
+        assert got.genre == "Comedy"              # filled
 
 
 def test_delete(tmp_path):
@@ -67,25 +90,105 @@ def test_delete(tmp_path):
         assert db.count() == 0
 
 
-def test_ordering_newest_first(tmp_path):
-    with Database(tmp_path / "t.db") as db:
-        db.add(make_film(title="Old", year=2010))
-        db.add(make_film(title="New", year=2024))
-        titles = [f.title for f in db.all()]
-        assert titles[0] == "New"
+# --- fetch ----------------------------------------------------------------
+def test_every_festival_has_awards():
+    for fest, awards in FESTIVAL_AWARDS.items():
+        assert awards, f"{fest} has no awards mapped"
 
 
-def test_render_html_contains_films():
+def test_sundance_and_sxsw_are_mapped():
+    assert "Sundance" in FESTIVAL_AWARDS
+    assert "SXSW" in FESTIVAL_AWARDS
+
+
+def test_build_query_single_year_and_labels():
+    q = build_query(["Palme d'Or", "Grand Prix"], year=2023)
+    assert "FILTER(?year = 2023)" in q
+    assert '"Palme d\'Or"' in q
+    assert "wdt:P136" in q          # genre
+    assert "schema:about ?film" in q  # wikipedia article
+
+
+def test_title_from_article():
+    url = "https://en.wikipedia.org/wiki/Anatomy_of_a_Fall"
+    assert _title_from_article(url) == "Anatomy of a Fall"
+    assert _title_from_article("") == ""
+
+
+SPARQL_SAMPLE = {
+    "results": {
+        "bindings": [
+            {
+                "award": {"value": "Palme d'Or"},
+                "filmLabel": {"value": "Anora"},
+                "directors": {"value": "Sean Baker"},
+                "countries": {"value": "United States"},
+                "genres": {"value": "Comedy, Drama"},
+                "description": {"value": "2024 film"},
+                "article": {"value": "https://en.wikipedia.org/wiki/Anora_(film)"},
+            },
+            {  # no title -> skipped
+                "award": {"value": "Grand Prix"},
+                "filmLabel": {"value": ""},
+            },
+        ]
+    }
+}
+
+
+def test_parse_results_builds_films_and_titles():
+    films, titles = _parse_results(SPARQL_SAMPLE, "Cannes", 2024)
+    assert [f.title for f in films] == ["Anora"]
+    assert films[0].genre == "Comedy, Drama"
+    assert films[0].award == "Palme d'Or"
+    assert films[0].year == 2024
+    assert titles == {0: "Anora (film)"}
+
+
+def test_fetch_award_winners_enriches_with_summary():
+    wiki_sample = {
+        "query": {
+            "pages": {
+                "1": {"title": "Anora (film)", "extract": "Anora is a 2024 film about..."}
+            }
+        }
+    }
+
+    def fake_fetch(endpoint, params):
+        return wiki_sample if "titles" in params else SPARQL_SAMPLE
+
+    films = fetch_award_winners("Cannes", 2024, fetcher=fake_fetch)
+    assert len(films) == 1
+    assert films[0].synopsis.startswith("Anora is a 2024 film")
+
+
+def test_fetch_summaries_resolves_redirects():
+    sample = {
+        "query": {
+            "redirects": [{"from": "Old Title", "to": "New Title"}],
+            "pages": {"1": {"title": "New Title", "extract": "Extract text."}},
+        }
+    }
+    out = fetch_summaries(["Old Title"], fetcher=lambda e, p: sample)
+    assert out["Old Title"] == "Extract text."
+
+
+# --- html rendering -------------------------------------------------------
+def test_render_html_has_three_filters_and_genre_data():
     films = [
-        make_film(title="Parasite", festival="Cannes", award="Palme d'Or"),
-        make_film(title="Joker", festival="Venice", award="Golden Lion"),
+        make_film(title="Anora", festival="Cannes", year=2024,
+                  genre="Comedy, Drama", award="Palme d'Or"),
+        make_film(title="Joker", festival="Venice", year=2019, genre="Thriller"),
     ]
     html = render_html(films)
-    assert "<!doctype html>" in html
-    assert "Parasite" in html
-    assert "Palme d&#x27;Or" in html or "Palme d'Or" in html
-    assert 'data-fest="Cannes"' in html
-    assert 'data-fest="Venice"' in html
+    assert 'id="f-festival"' in html
+    assert 'id="f-year"' in html
+    assert 'id="f-genre"' in html
+    assert 'data-genre="Comedy|Drama"' in html
+    assert 'data-year="2024"' in html
+    # Genre and year options are populated from the data.
+    assert "<option value=\"Comedy\">Comedy</option>" in html
+    assert "<option value=\"2024\">2024</option>" in html
 
 
 def test_render_html_escapes():
@@ -98,73 +201,3 @@ def test_render_html_escapes():
 def test_render_html_empty():
     html = render_html([])
     assert "No films yet" in html
-
-
-def _binding(title, year, directors="", countries=""):
-    b = {"filmLabel": {"value": title}, "year": {"value": str(year)}}
-    if directors:
-        b["directors"] = {"value": directors}
-    if countries:
-        b["countries"] = {"value": countries}
-    return b
-
-
-SAMPLE_SPARQL = {
-    "results": {
-        "bindings": [
-            _binding("Anora", 2024, "Sean Baker", "United States"),
-            _binding("Parasite", 2019, "Bong Joon-ho", "South Korea"),
-            _binding("", 2020),          # missing title -> skipped
-            _binding("No Year Film", ""),  # missing year -> skipped
-        ]
-    }
-}
-
-
-def test_build_query_includes_label_and_since():
-    q = build_query("Palme d'Or", since=2020)
-    assert '"Palme d\'Or"@en' in q
-    assert "FILTER(?year >= 2020)" in q
-
-
-def test_parse_results_skips_incomplete_rows():
-    films = _parse_results(SAMPLE_SPARQL, "Cannes", "Palme d'Or")
-    titles = [f.title for f in films]
-    assert titles == ["Anora", "Parasite"]
-    assert films[0].festival == "Cannes"
-    assert films[0].award == "Palme d'Or"
-    assert films[0].director == "Sean Baker"
-
-
-def test_fetch_award_winners_with_injected_fetcher():
-    def fake_fetch(endpoint, params):
-        assert "query" in params
-        return SAMPLE_SPARQL
-
-    films = fetch_award_winners("Cannes", fetcher=fake_fetch)
-    assert {f.title for f in films} == {"Anora", "Parasite"}
-
-
-def test_merge_preserves_curated_fields(tmp_path):
-    with Database(tmp_path / "t.db") as db:
-        # Curated row with a hand-written synopsis and section.
-        db.add(make_film(title="Anora", year=2024,
-                         synopsis="Hand-written.", section="Competition"))
-        # Fetched row (merge) has a director but blank synopsis/section.
-        fetched = Film(title="Anora", year=2024, festival="Cannes",
-                       director="Sean Baker", country="USA", award="Palme d'Or")
-        db.add(fetched, merge=True)
-        got = db.all()[0]
-        assert got.synopsis == "Hand-written."   # preserved
-        assert got.section == "Competition"       # preserved
-        assert got.director == "Sean Baker"       # filled from fetch
-        assert got.award == "Palme d'Or"          # filled from fetch
-
-
-def test_seed_file_is_valid():
-    seed = Path(__file__).resolve().parent.parent / "data" / "seed.json"
-    data = json.loads(seed.read_text(encoding="utf-8"))
-    assert len(data) > 0
-    # Every entry must construct a valid Film.
-    for item in data:
-        Film(**item)

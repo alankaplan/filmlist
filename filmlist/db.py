@@ -18,9 +18,13 @@ CREATE TABLE IF NOT EXISTS films (
     festival TEXT    NOT NULL,
     director TEXT    NOT NULL DEFAULT '',
     country  TEXT    NOT NULL DEFAULT '',
+    genre    TEXT    NOT NULL DEFAULT '',
     section  TEXT    NOT NULL DEFAULT '',
     award    TEXT    NOT NULL DEFAULT '',
     synopsis TEXT    NOT NULL DEFAULT '',
+    -- Provenance: 'pull' = fetched by the automated pull system,
+    -- 'manual' = entered by hand. The HTML output shows 'pull' only.
+    source   TEXT    NOT NULL DEFAULT 'manual',
     UNIQUE(title, year, festival)
 );
 """
@@ -52,37 +56,44 @@ class Database:
     _UPSERT_OVERWRITE = """
         director = excluded.director,
         country  = excluded.country,
+        genre    = excluded.genre,
         section  = excluded.section,
         award    = excluded.award,
-        synopsis = excluded.synopsis
+        synopsis = excluded.synopsis,
+        source   = excluded.source
     """
 
     # Fill only fields that are currently blank, preserving curated data.
     _UPSERT_MERGE = """
         director = CASE WHEN films.director = '' THEN excluded.director ELSE films.director END,
         country  = CASE WHEN films.country  = '' THEN excluded.country  ELSE films.country  END,
+        genre    = CASE WHEN films.genre    = '' THEN excluded.genre    ELSE films.genre    END,
         section  = CASE WHEN films.section  = '' THEN excluded.section  ELSE films.section  END,
         award    = CASE WHEN films.award    = '' THEN excluded.award    ELSE films.award    END,
-        synopsis = CASE WHEN films.synopsis = '' THEN excluded.synopsis ELSE films.synopsis END
+        synopsis = CASE WHEN films.synopsis = '' THEN excluded.synopsis ELSE films.synopsis END,
+        source   = excluded.source
     """
 
-    def add(self, film: Film, merge: bool = False) -> int:
+    def add(self, film: Film, merge: bool = False, source: str = "manual") -> int:
         """Insert a film, returning its id. Existing (title, year, festival)
-        rows are updated in place so re-running the seed is idempotent.
+        rows are updated in place so re-running a pull is idempotent.
 
-        With ``merge=True`` only blank columns on the existing row are filled,
+        ``source`` records provenance ('pull' or 'manual'). With
+        ``merge=True`` only blank columns on the existing row are filled,
         so an automated fetch never overwrites hand-curated data."""
         set_clause = self._UPSERT_MERGE if merge else self._UPSERT_OVERWRITE
+        params = film.to_dict()
+        params["source"] = source
         cur = self.conn.execute(
             f"""
             INSERT INTO films (title, year, festival, director, country,
-                               section, award, synopsis)
+                               genre, section, award, synopsis, source)
             VALUES (:title, :year, :festival, :director, :country,
-                    :section, :award, :synopsis)
+                    :genre, :section, :award, :synopsis, :source)
             ON CONFLICT(title, year, festival) DO UPDATE SET
             {set_clause}
             """,
-            film.to_dict(),
+            params,
         )
         self.conn.commit()
         if cur.lastrowid:
@@ -93,10 +104,12 @@ class Database:
         ).fetchone()
         return row["id"]
 
-    def add_many(self, films: Iterable[Film], merge: bool = False) -> int:
+    def add_many(
+        self, films: Iterable[Film], merge: bool = False, source: str = "manual"
+    ) -> int:
         count = 0
         for film in films:
-            self.add(film, merge=merge)
+            self.add(film, merge=merge, source=source)
             count += 1
         return count
 
@@ -114,6 +127,7 @@ class Database:
             festival=row["festival"],
             director=row["director"],
             country=row["country"],
+            genre=row["genre"],
             section=row["section"],
             award=row["award"],
             synopsis=row["synopsis"],
@@ -123,6 +137,7 @@ class Database:
         self,
         festival: Optional[str] = None,
         year: Optional[int] = None,
+        source: Optional[str] = None,
     ) -> list[Film]:
         query = "SELECT * FROM films"
         clauses, params = [], []
@@ -132,6 +147,9 @@ class Database:
         if year:
             clauses.append("year = ?")
             params.append(year)
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY year DESC, festival ASC, title ASC"

@@ -13,6 +13,7 @@ FESTIVALS = [
     "Venice",
     "Berlin",
     "Sundance",
+    "SXSW",
     "Toronto",
     "Locarno",
     "San Sebastian",
@@ -29,10 +30,16 @@ class Film:
     festival: str
     director: str = ""
     country: str = ""
+    genre: str = ""         # comma-separated, e.g. "Drama, Thriller"
     section: str = ""       # e.g. "Competition", "Un Certain Regard"
     award: str = ""         # e.g. "Palme d'Or", "Golden Lion"
     synopsis: str = ""
     id: Optional[int] = None
+
+    @property
+    def genres(self) -> list[str]:
+        """The genre string split into individual, trimmed labels."""
+        return [g.strip() for g in self.genre.split(",") if g.strip()]
 
     def __post_init__(self) -> None:
         self.title = self.title.strip()
