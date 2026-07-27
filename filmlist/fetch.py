@@ -36,8 +36,9 @@ _PROXY_CA_BUNDLE = "/root/.ccr/ca-bundle.crt"
 _SUMMARY_LIMIT = 360
 
 # Each festival maps to the English labels of the awards we pull. Matching is
-# case-insensitive and also checks Wikidata aliases (skos:altLabel), so these
-# need only be close to the canonical name. Edit freely to add awards.
+# against Wikidata's exact label or alias (skos:altLabel), so a label that
+# doesn't match returns nothing rather than erroring — edit freely to add or
+# correct awards to match how Wikidata names them.
 FESTIVAL_AWARDS: dict[str, list[str]] = {
     "Cannes": [
         "Palme d'Or",
@@ -95,10 +96,12 @@ class FetchError(RuntimeError):
 def build_query(award_labels: list[str], year: int) -> str:
     """Return a SPARQL query for a festival's award winners in ``year``.
 
-    Awards are matched by their English label or alias (case-insensitive);
-    the winning year comes from the award statement's point-in-time (P585)
-    qualifier, falling back to the film's publication date (P577)."""
-    values = " ".join(json.dumps(lbl) for lbl in award_labels)
+    Awards are matched by their exact English label or alias, which uses
+    Wikidata's label index and keeps the query fast; the winning year comes
+    from the award statement's point-in-time (P585) qualifier, falling back
+    to the film's publication date (P577)."""
+    # Language-tagged literals so the match hits the indexed label/altLabel.
+    values = " ".join(f"{json.dumps(lbl)}@en" for lbl in award_labels)
     return f"""
 SELECT ?award ?filmLabel ?article
        (SAMPLE(?descRaw) AS ?description)
@@ -107,8 +110,7 @@ SELECT ?award ?filmLabel ?article
        (GROUP_CONCAT(DISTINCT ?genreLabel;    separator=", ") AS ?genres)
 WHERE {{
   VALUES ?award {{ {values} }}
-  ?awardEntity rdfs:label|skos:altLabel ?awLabel .
-  FILTER(LANG(?awLabel) = "en" && LCASE(STR(?awLabel)) = LCASE(?award))
+  {{ ?awardEntity rdfs:label ?award . }} UNION {{ ?awardEntity skos:altLabel ?award . }}
   ?film p:P166 ?stat .
   ?stat ps:P166 ?awardEntity .
   OPTIONAL {{ ?stat pq:P585 ?when . }}
@@ -244,7 +246,7 @@ def _http_get(url: str, params: dict) -> dict:
         headers={"Accept": "application/json", "User-Agent": USER_AGENT},
     )
     try:
-        with urllib.request.urlopen(req, timeout=45, context=_ssl_context()) as resp:
+        with urllib.request.urlopen(req, timeout=90, context=_ssl_context()) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:  # pragma: no cover - network path
         raise FetchError(f"Server returned HTTP {exc.code}: {exc.reason}") from exc
