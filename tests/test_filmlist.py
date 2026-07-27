@@ -82,6 +82,36 @@ def test_merge_preserves_curated_fields(tmp_path):
         assert got.genre == "Comedy"              # filled
 
 
+def test_migrates_legacy_schema(tmp_path):
+    import sqlite3
+    # A database created before the genre/source columns existed.
+    path = tmp_path / "legacy.db"
+    con = sqlite3.connect(path)
+    con.executescript(
+        """
+        CREATE TABLE films (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL, year INTEGER NOT NULL, festival TEXT NOT NULL,
+            director TEXT DEFAULT '', country TEXT DEFAULT '',
+            section TEXT DEFAULT '', award TEXT DEFAULT '', synopsis TEXT DEFAULT '',
+            UNIQUE(title, year, festival)
+        );
+        INSERT INTO films (title, year, festival) VALUES ('Old Film', 2015, 'Cannes');
+        """
+    )
+    con.commit()
+    con.close()
+
+    # Opening it should add the missing columns and remain usable.
+    with Database(path) as db:
+        assert db.count() == 1
+        db.add(make_film(title="New Film", genre="Drama"), source="pull")
+        got = [f for f in db.all() if f.title == "New Film"][0]
+        assert got.genre == "Drama"
+        # The legacy row defaults to the 'manual' source, so it stays off the page.
+        assert db.all(source="pull") == [f for f in db.all() if f.title == "New Film"]
+
+
 def test_delete(tmp_path):
     with Database(tmp_path / "t.db") as db:
         fid = db.add(make_film())

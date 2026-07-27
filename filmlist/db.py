@@ -33,13 +33,32 @@ CREATE TABLE IF NOT EXISTS films (
 class Database:
     """A thin, well-behaved wrapper around a SQLite film store."""
 
+    # Columns added after the first release, with the DDL to add them to an
+    # older database that predates them.
+    _MIGRATIONS = {
+        "genre": "ALTER TABLE films ADD COLUMN genre TEXT NOT NULL DEFAULT ''",
+        "source": "ALTER TABLE films ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'",
+    }
+
     def __init__(self, path: Path | str = DEFAULT_DB_PATH):
         self.path = str(path)
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Add any columns missing from a database created by an older
+        version, so existing files keep working across upgrades."""
+        existing = {
+            row["name"]
+            for row in self.conn.execute("PRAGMA table_info(films)").fetchall()
+        }
+        for column, ddl in self._MIGRATIONS.items():
+            if column not in existing:
+                self.conn.execute(ddl)
 
     # -- context manager -------------------------------------------------
     def __enter__(self) -> "Database":
