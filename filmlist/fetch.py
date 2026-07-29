@@ -287,9 +287,13 @@ def _apply_tmdb_tags(
         return
     for idx, film in enumerate(films):
         tmdb_id, imdb_id = external_ids.get(idx, ("", ""))
-        rating, keywords = tmdb.content_signals(tmdb_id, imdb_id, key, fetcher)
-        if rating or keywords:
-            film.tags = ", ".join(age_tags(film.genres, rating, keywords))
+        rating, keywords = tmdb.content_signals(
+            tmdb_id, imdb_id, key, fetcher, film.title, film.year
+        )
+        # Certification is the sole source of a positive age tag; recompute
+        # unconditionally so an uncertified film becomes "Unrated" rather than
+        # keeping the provisional value.
+        film.tags = ", ".join(age_tags(film.genres, rating, keywords))
 
 
 def fetch_award_winners(

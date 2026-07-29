@@ -11,8 +11,9 @@ for **festival, year, genre, and tags** — pick several values in a filter to
 widen the results, and combine filters to narrow them.
 
 Every film is also **auto-tagged for age appropriateness** — specifically for a
-**5-year-old** and a **12-year-old** — using official age certifications and
-content keywords from **TMDB** when available, falling back to genre.
+**5-year-old** and a **12-year-old** — from official **TMDB** age
+certifications (refined by content keywords). Films with no certification are
+marked `Unrated` rather than guessed, so a positive tag is never wrong.
 
 ## Requirements
 
@@ -57,38 +58,41 @@ All commands share an optional `--db PATH` flag (defaults to `filmlist.db`).
 
 ### Age appropriateness (5 and 12)
 
-Every film is assessed for two ages and tagged with whichever it passes:
+Each film is tagged from **real age certifications only** — a positive tag is
+never a guess:
 
 | Tag | Meaning |
 | --- | --- |
-| `OK for 5` | Suitable for a 5-year-old (also implies `OK for 12`). |
-| `OK for 12` | Suitable for a 12-year-old. |
-| _(neither)_ | Too mature for both — no age tag shown. |
+| `OK for 5` | Certified suitable for a 5-year-old (also implies `OK for 12`). |
+| `OK for 12` | Certified suitable for a 12-year-old. |
+| _(neither)_ | Rated, but too mature for both — no age tag shown. |
+| `Unrated` | No age certification found — appropriateness is **not** asserted. |
 
-The assessment prefers real data, in this order (see `filmlist/tagging.py`):
+How a film is assessed (see `filmlist/tagging.py`):
 
 1. **Official age certification** from TMDB (`/movie/{id}/release_dates`),
    mapped to a minimum age — e.g. G/U → *OK for 5*; PG, 12/12A → *OK for 12*;
-   PG-13, R and up → neither. Thresholds follow each rating body's own
-   guidance.
+   PG-13, R and up → neither. Thresholds follow each rating body's own guidance.
 2. **Content keywords** from TMDB (nudity, graphic violence, drugs…) — these
-   only ever *tighten* the rating, never loosen it.
-3. **Genre heuristic** as a last resort, so films with no TMDB data still get
-   assessed.
+   only ever *tighten* a certification, never loosen it.
+
+**Genre is deliberately not used to grant an age tag.** An arthouse "drama" is
+not automatically fit for a 12-year-old, and guessing from genre produced
+confidently wrong tags — so a film with no certification is simply `Unrated`.
 
 Films are linked to TMDB via their Wikidata TMDB id (P4947) or IMDb id (P345),
-so no title guessing is needed. Set the API key to enable it:
+and, failing that, by a **title + year search** (exact title, release year
+within one) so foreign/festival titles still get rated. Set the API key:
 
 ```bash
 export TMDB_API_KEY=your_v3_api_key
 python main.py pull 2024        # "TMDB enrichment: on"
 ```
 
-Without a key, `pull` still works and falls back to the genre-based estimate
-(the age tags are then a rough heuristic, not an official rating). Re-running
-`pull` refreshes the TMDB-based tags; `python main.py retag` recomputes the
-genre-based fallback for rows already in the database. You can also attach your
-own tags to a hand-added film with `add ... --tags "must-watch"`.
+Without a key, `pull` still runs but every film is `Unrated`. Re-running `pull`
+with a key is what fetches real ratings; `python main.py retag` only normalizes
+tags offline (it cannot fetch certifications). You can also attach your own tags
+to a hand-added film with `add ... --tags "must-watch"`.
 
 > This product uses the TMDB API but is not endorsed or certified by TMDB.
 
@@ -131,8 +135,8 @@ filmlist/
   models.py      # Film dataclass (incl. genre, tags) + festival list & validation
   db.py          # SQLite persistence (source tracking, migrations, upserts)
   fetch.py       # Wikidata award fetcher + Wikipedia summary enrichment
-  tmdb.py        # TMDB client: age certifications + content keywords
-  tagging.py     # age tagging from certification, keywords, then genre
+  tmdb.py        # TMDB client: age certifications, keywords, title+year search
+  tagging.py     # age tagging from certification + keywords (else "Unrated")
   generate.py    # HTML page renderer with additive festival/year/genre/tag filters
   cli.py         # argparse command-line interface
 tests/           # pytest suite

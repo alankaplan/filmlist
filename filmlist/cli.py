@@ -86,8 +86,8 @@ def cmd_delete(args: argparse.Namespace) -> int:
 
 def cmd_retag(args: argparse.Namespace) -> int:
     """Recompute automatic age tags for every film from its genres."""
-    from .tagging import AGE_TAGS, OBSOLETE_AGE_TAGS
-    stale = set(AGE_TAGS) | set(OBSOLETE_AGE_TAGS)
+    from .tagging import AGE_TAGS, OBSOLETE_AGE_TAGS, UNRATED
+    stale = set(AGE_TAGS) | set(OBSOLETE_AGE_TAGS) | {UNRATED}
     with Database(args.db) as db:
         films = db.all()
         for f in films:
@@ -95,7 +95,8 @@ def cmd_retag(args: argparse.Namespace) -> int:
             # Preserve non-age tags; drop any current or obsolete age tags.
             kept = [t for t in f.tag_list if t not in stale]
             db.set_tags(f.id, ", ".join(dict.fromkeys(auto + kept)))
-    print(f"Re-tagged {len(films)} film(s).")
+    print(f"Re-tagged {len(films)} film(s). Age tags require certifications; "
+          "re-run `pull` with TMDB_API_KEY set to fetch them.")
     return 0
 
 
@@ -164,7 +165,9 @@ def build_parser() -> argparse.ArgumentParser:
     dp.set_defaults(func=cmd_delete)
 
     rp = sub.add_parser(
-        "retag", help="Recompute automatic age tags for all films from genres"
+        "retag",
+        help="Normalize age tags offline (marks films 'Unrated'; real ratings "
+        "come from `pull` with TMDB_API_KEY)",
     )
     rp.set_defaults(func=cmd_retag)
 

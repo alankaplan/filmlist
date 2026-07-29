@@ -1,17 +1,22 @@
 """Automatic age-appropriateness tagging for films.
 
-Every film is assessed for exactly two ages — 5 and 12 — and tagged with
-whichever it passes:
+Every film is assessed for exactly two ages — 5 and 12 — using **only** a real
+age certification, so a positive tag is never a guess:
 
     "OK for 5"   suitable for a five-year-old   (implies "OK for 12")
     "OK for 12"  suitable for a twelve-year-old
-    (neither)    too mature for both
+    (neither)    rated, but too mature for both
+    "Unrated"    no age certification available — appropriateness not asserted
 
-The assessment prefers real data, in this order:
+The signals, in order:
 
-    1. an official age certification (TMDB, via /movie/{id}/release_dates)
-    2. content keywords (TMDB) — these only ever tighten the rating
-    3. a genre heuristic, as a last resort so nothing goes unassessed
+    1. an official age certification (TMDB, via /movie/{id}/release_dates) —
+       the sole source of a positive "OK for …" tag
+    2. content keywords (TMDB) — these only ever tighten the certification
+
+Genre is deliberately NOT used to grant an age tag: it is far too weak (an
+arthouse "drama" is not automatically fit for a 12-year-old), and doing so
+produced confidently wrong results. A film with no certification is "Unrated".
 
 Certifications and keywords come from :mod:`filmlist.tmdb`; the mapping tables
 below turn them into a minimum appropriate age. Thresholds mirror each rating
@@ -27,8 +32,10 @@ from typing import Optional
 
 AGE_5 = "OK for 5"
 AGE_12 = "OK for 12"
+UNRATED = "Unrated"
 
-# All age tags, youngest-friendly first (used to build filter options/order).
+# The positive age tags (green styling). "Unrated" is intentionally excluded so
+# it renders as a neutral pill and is never mistaken for an assurance.
 AGE_TAGS = [AGE_5, AGE_12]
 
 # Age tags emitted by earlier versions; stripped when retagging so upgrades
@@ -83,56 +90,22 @@ def keyword_floor(keywords: Optional[list[str]]) -> int:
     return 0
 
 
-# --- genre heuristic (fallback) -------------------------------------------
-_ADULT = ("porn", "erotic", "hardcore", "exploitation", "slasher", "splatter",
-          "giallo", "snuff")
-_MATURE = ("horror", "thriller", "crime", "war", "noir", "gangster", "action",
-           "western", "martial arts", "disaster", "zombie", "vampire")
-_KID = ("animation", "animated", "family", "children", "stop motion",
-        "computer animation")
-_TWEEN = ("comedy", "drama", "documentary", "romance", "biographical", "biopic",
-          "historical", "history", "mystery", "science fiction", "sci-fi",
-          "fantasy", "adventure", "superhero", "sport", "coming-of-age",
-          "musical", "teen", "road movie", "satire")
-
-
-def _matches(genres_lower: list[str], keywords) -> bool:
-    return any(any(k in g for k in keywords) for g in genres_lower)
-
-
-def genre_min_age(genres: list[str]) -> int:
-    """Estimate a minimum appropriate age from genres (fallback signal)."""
-    g = [x.lower() for x in genres]
-    if _matches(g, _ADULT):
-        return 18
-    if _matches(g, _MATURE):
-        return 16
-    if _matches(g, _KID):
-        return 5
-    if _matches(g, _TWEEN):
-        return 12
-    return 16  # unknown / unrecognised genres: assume mature, not kid-safe
-
-
 def age_tags(
-    genres: list[str],
+    genres: Optional[list[str]] = None,
     certification: Optional[str] = None,
     keywords: Optional[list[str]] = None,
 ) -> list[str]:
-    """Return the age tags for a film, combining the available signals.
+    """Return the age tags for a film.
 
-    Certification is authoritative when present; keywords can only tighten it;
-    genre is the fallback when no certification is available."""
-    kw_floor = keyword_floor(keywords)
+    A positive "OK for …" tag comes only from a real age certification
+    (keywords may tighten it). Without a certification the film is "Unrated" —
+    genre is never used to assert appropriateness. ``genres`` is accepted for a
+    stable call signature but is intentionally unused."""
     cert_age = cert_min_age(certification)
+    if cert_age is None:
+        return [UNRATED]
 
-    if cert_age is not None:
-        base = max(cert_age, kw_floor)
-    elif kw_floor > 0:
-        base = max(kw_floor, genre_min_age(genres))
-    else:
-        base = genre_min_age(genres)
-
+    base = max(cert_age, keyword_floor(keywords))
     tags: list[str] = []
     if base <= 12:
         tags.append(AGE_12)

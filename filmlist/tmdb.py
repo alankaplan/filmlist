@@ -35,14 +35,43 @@ def api_key() -> Optional[str]:
     return key or None
 
 
+def search_id(
+    title: str, year: int, key: str, fetcher: Fetcher = _http_get
+) -> Optional[str]:
+    """Find a TMDB movie id by title + year, for films with no Wikidata link.
+
+    Requires a case-insensitive title match (against title or original title)
+    and a release year within one of ``year`` (festival vs release year can
+    differ by a year), so a loose search can't attach the wrong film."""
+    if not title:
+        return None
+    data = fetcher(
+        f"{TMDB_API}/search/movie",
+        {"query": title, "primary_release_year": year, "api_key": key},
+    )
+    wanted = title.strip().casefold()
+    for r in data.get("results", []):
+        names = {
+            (r.get("title") or "").strip().casefold(),
+            (r.get("original_title") or "").strip().casefold(),
+        }
+        rel_year = (r.get("release_date") or "")[:4]
+        year_ok = rel_year.isdigit() and abs(int(rel_year) - year) <= 1
+        if wanted in names and year_ok:
+            return str(r.get("id"))
+    return None
+
+
 def resolve_id(
     tmdb_id: str,
     imdb_id: str,
     key: str,
     fetcher: Fetcher = _http_get,
+    title: str = "",
+    year: Optional[int] = None,
 ) -> Optional[str]:
-    """Return a TMDB movie id, using the TMDB id directly or resolving the
-    IMDb id via /find. Returns None when neither yields a match."""
+    """Return a TMDB movie id: the TMDB id directly, else the IMDb id via
+    /find, else a title+year search. None when nothing matches."""
     if tmdb_id:
         return str(tmdb_id)
     if imdb_id:
@@ -53,6 +82,8 @@ def resolve_id(
         results = data.get("movie_results") or []
         if results:
             return str(results[0].get("id"))
+    if title and year is not None:
+        return search_id(title, year, key, fetcher)
     return None
 
 
@@ -88,13 +119,16 @@ def content_signals(
     imdb_id: str,
     key: str,
     fetcher: Fetcher = _http_get,
+    title: str = "",
+    year: Optional[int] = None,
 ) -> tuple[Optional[str], list[str]]:
     """Best-effort ``(rating, keywords)`` for a film.
 
-    ``rating`` is the bare certification string (e.g. "PG-13"); either result
-    may be empty when TMDB has no data or a lookup fails."""
+    Links the film via TMDB id, IMDb id, or a title+year search. ``rating`` is
+    the bare certification string (e.g. "PG-13"); either result may be empty
+    when TMDB has no data or a lookup fails."""
     try:
-        movie_id = resolve_id(tmdb_id, imdb_id, key, fetcher)
+        movie_id = resolve_id(tmdb_id, imdb_id, key, fetcher, title, year)
         if not movie_id:
             return None, []
         cert = certification(movie_id, key, fetcher)

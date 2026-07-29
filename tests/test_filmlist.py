@@ -14,7 +14,7 @@ from filmlist.fetch import (
 from filmlist import tmdb
 from filmlist.generate import render_html
 from filmlist.models import Film
-from filmlist.tagging import AGE_5, AGE_12, age_tags
+from filmlist.tagging import AGE_5, AGE_12, UNRATED, age_tags
 
 
 def make_film(**kw) -> Film:
@@ -55,27 +55,26 @@ def test_tag_list_property():
     assert make_film(tags="").tag_list == []
 
 
-# --- tagging: genre fallback ----------------------------------------------
-def test_age_tags_genre_fallback():
-    assert age_tags(["Animation"]) == [AGE_5, AGE_12]
-    assert age_tags(["Family film", "Comedy"]) == [AGE_5, AGE_12]
-    assert age_tags(["Drama"]) == [AGE_12]
-    # Mature / adult / unknown genres are too mature for either age -> no tag.
-    assert age_tags(["Horror"]) == []
-    assert age_tags(["Erotic thriller"]) == []
-    assert age_tags(["Avant-garde"]) == []
-    assert age_tags([]) == []
+# --- tagging: no certification -> Unrated ---------------------------------
+def test_age_tags_unrated_without_certification():
+    # Genre alone never grants a positive tag, whatever the genre.
+    assert age_tags(["Animation"]) == [UNRATED]
+    assert age_tags(["Drama"]) == [UNRATED]          # the "Dreams" case
+    assert age_tags(["Horror"]) == [UNRATED]
+    assert age_tags([]) == [UNRATED]
+    # Even mature keywords can't produce a positive tag with no certification.
+    assert age_tags(["Drama"], keywords=["nudity"]) == [UNRATED]
 
 
 # --- tagging: certification-driven ----------------------------------------
 def test_age_tags_from_certification():
-    assert age_tags([], certification="G") == [AGE_5, AGE_12]
-    assert age_tags([], certification="U") == [AGE_5, AGE_12]
-    assert age_tags([], certification="PG") == [AGE_12]        # not for 5
-    assert age_tags([], certification="12A") == [AGE_12]
-    assert age_tags([], certification="PG-13") == []           # 13+, not for 12
-    assert age_tags([], certification="R") == []
-    assert age_tags([], certification="16") == []              # numeric cert
+    assert age_tags(certification="G") == [AGE_5, AGE_12]
+    assert age_tags(certification="U") == [AGE_5, AGE_12]
+    assert age_tags(certification="PG") == [AGE_12]        # not for 5
+    assert age_tags(certification="12A") == [AGE_12]
+    assert age_tags(certification="PG-13") == []           # 13+, not for 12
+    assert age_tags(certification="R") == []
+    assert age_tags(certification="16") == []              # numeric cert
 
 
 def test_certification_overrides_genre():
@@ -83,13 +82,11 @@ def test_certification_overrides_genre():
     assert age_tags(["Animation"], certification="R") == []
 
 
-def test_keywords_only_tighten():
+def test_keywords_only_tighten_a_certification():
     # A G rating with a mature keyword loses the "OK for 5" tag.
-    assert age_tags([], certification="G", keywords=["nudity"]) == [AGE_12]
+    assert age_tags(certification="G", keywords=["nudity"]) == [AGE_12]
     # A hard keyword removes both tags even on a G rating.
-    assert age_tags([], certification="G", keywords=["graphic violence"]) == []
-    # Keywords also tighten the genre fallback (no certification).
-    assert age_tags(["Animation"], keywords=["nudity"]) == [AGE_12]
+    assert age_tags(certification="G", keywords=["graphic violence"]) == []
 
 
 # --- tmdb client ----------------------------------------------------------
@@ -124,11 +121,29 @@ def test_tmdb_keywords_lowercased():
     assert tmdb.keywords("42", "key", fetch) == ["nudity", "drug abuse"]
 
 
-def test_tmdb_resolve_id_direct_and_via_imdb():
-    find = {"movie_results": [{"id": 999}]}
-    fetch = _tmdb_fetcher({"/find/": find})
-    assert tmdb.resolve_id("123", "", "key", fetch) == "123"          # direct
-    assert tmdb.resolve_id("", "tt0111161", "key", fetch) == "999"    # via /find
+def test_tmdb_resolve_id_direct_via_imdb_and_search():
+    routes = {
+        "/find/": {"movie_results": [{"id": 999}]},
+        "/search/movie": {"results": [
+            {"id": 777, "title": "Dreams", "release_date": "2025-02-14"},
+        ]},
+    }
+    fetch = _tmdb_fetcher(routes)
+    assert tmdb.resolve_id("123", "", "key", fetch) == "123"                 # direct
+    assert tmdb.resolve_id("", "tt0111161", "key", fetch) == "999"          # /find
+    # No linked ids -> title+year search fallback.
+    assert tmdb.resolve_id("", "", "key", fetch, "Dreams", 2025) == "777"
+
+
+def test_tmdb_search_requires_title_and_year_match():
+    routes = {"/search/movie": {"results": [
+        {"id": 1, "title": "Dreams", "release_date": "2019-01-01"},   # wrong year
+        {"id": 2, "title": "Other Film", "release_date": "2025-01-01"},  # wrong title
+        {"id": 3, "title": "Dreams", "release_date": "2024-11-01"},   # ok (±1 year)
+    ]}}
+    fetch = _tmdb_fetcher(routes)
+    assert tmdb.search_id("Dreams", 2025, "key", fetch) == "3"
+    assert tmdb.search_id("Nonexistent", 2025, "key", fetch) is None
 
 
 def test_tmdb_content_signals_combines_calls():
@@ -186,7 +201,9 @@ def test_retag_strips_obsolete_age_tags_and_keeps_custom(tmp_path):
         got = db.all()[0]
     assert "16+" not in got.tag_list          # obsolete age tag removed
     assert "favorite" in got.tag_list         # custom tag preserved
-    assert AGE_5 in got.tag_list              # recomputed from Animation genre
+    # Offline retag can't fetch certifications, so the film is Unrated.
+    assert UNRATED in got.tag_list
+    assert AGE_5 not in got.tag_list
 
 
 def test_migrates_legacy_schema(tmp_path):
@@ -300,8 +317,8 @@ def test_fetch_award_winners_enriches_with_summary():
     films = fetch_award_winners("Cannes", 2024, fetcher=fake_fetch, with_tmdb=False)
     assert len(films) == 1
     assert films[0].synopsis.startswith("Anora is a 2024 film")
-    # Pulled films are auto-tagged for age from their genres (Comedy, Drama).
-    assert films[0].tags == AGE_12
+    # Without a certification (TMDB off), the film is Unrated, never a guess.
+    assert films[0].tags == UNRATED
 
 
 def test_fetch_summaries_resolves_redirects():
@@ -322,6 +339,8 @@ def test_render_html_has_four_multiselect_facets_and_data():
                   genre="Comedy, Drama", award="Palme d'Or", tags="OK for 12"),
         make_film(title="Flow", festival="Sundance", year=2024, genre="Animation",
                   tags="OK for 5, OK for 12"),
+        make_film(title="Dreams", festival="Berlin", year=2025, genre="Drama",
+                  tags="Unrated"),
     ]
     html = render_html(films)
     for dim in ("festival", "year", "genre", "tags"):
@@ -330,10 +349,14 @@ def test_render_html_has_four_multiselect_facets_and_data():
     assert 'data-genre="Comedy|Drama"' in html
     assert 'data-tags="OK for 12"' in html
     assert 'data-tags="OK for 5|OK for 12"' in html
+    assert 'data-tags="Unrated"' in html
     assert 'data-year="2024"' in html
     # Facet chips are populated from the data.
     assert '<button class="chip" data-val="Comedy">Comedy</button>' in html
     assert '<button class="chip" data-val="OK for 5">OK for 5</button>' in html
+    assert '<button class="chip" data-val="Unrated">Unrated</button>' in html
+    # "Unrated" is a neutral pill, not styled as a green age tag.
+    assert '<span class="g">Unrated</span>' in html
 
 
 def test_render_html_escapes():
