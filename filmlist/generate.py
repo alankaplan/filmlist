@@ -1,8 +1,10 @@
 """Render the film database to a single, self-contained HTML page.
 
-The page is a flat list of films with four additive, multi-select filters —
-festival, year, genre, and tag. Within a filter, selecting several values
-widens the results (OR); across filters they narrow (AND)."""
+The page is a compact list — one line per film (title, festival, year, award
+and age tag) that expands on click to show the full details — with four
+additive, multi-select filters: festival, year, genre, and tag. Within a
+filter, selecting several values widens the results (OR); across filters they
+narrow (AND). Expand/collapse uses native <details>/<summary>, so no extra JS."""
 
 from __future__ import annotations
 
@@ -12,7 +14,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .models import Film
-from .tagging import AGE_TAGS
+from .tagging import AGE_TAGS, UNRATED
 
 PAGE_TEMPLATE = """<!doctype html>
 <html lang="en">
@@ -65,27 +67,47 @@ main {{ max-width: 1000px; margin: 0 auto; padding: 1.5rem; }}
   border-radius: 8px; padding: .3rem .7rem; font-size: .8rem; cursor: pointer;
 }}
 #clear:hover {{ border-color: var(--accent); color: var(--text); }}
-.list {{ display: flex; flex-direction: column; gap: .7rem; }}
+.list {{ display: flex; flex-direction: column; gap: .35rem; }}
 .item {{
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  padding: .95rem 1.1rem; transition: border-color .12s ease;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  transition: border-color .12s ease;
 }}
 .item:hover {{ border-color: var(--accent); }}
-.item .head {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem; }}
-.item .title {{ font-size: 1.1rem; font-weight: 600; }}
-.item .award {{
-  font-size: .75rem; color: var(--accent);
+/* Compact one-line summary; click to expand. */
+.item > summary {{
+  list-style: none; cursor: pointer; display: flex; align-items: baseline;
+  gap: .5rem; padding: .5rem .8rem;
+}}
+.item > summary::-webkit-details-marker {{ display: none; }}
+.item > summary::before {{
+  content: "\\25B8"; color: var(--muted); font-size: .7rem; flex: none;
+}}
+.item[open] > summary::before {{ content: "\\25BE"; }}
+.s-main {{ flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+.s-title {{ font-weight: 600; }}
+.s-sub {{ color: var(--muted); font-size: .84rem; }}
+.s-sub .fest {{ color: var(--accent); font-weight: 600; }}
+.s-badges {{ margin-left: auto; display: flex; align-items: center; gap: .35rem; flex: none; }}
+.s-badges .trophy {{ font-size: .8rem; }}
+.age-chip {{
+  font-size: .7rem; border-radius: 999px; padding: .05rem .5rem; white-space: nowrap;
+  color: var(--muted); background: var(--chip); border: 1px solid var(--line);
+}}
+.age-chip.age {{ color: #062018; background: var(--age); border-color: var(--age); font-weight: 600; }}
+.details {{ padding: .1rem .8rem .75rem 1.7rem; }}
+.details .meta {{ color: var(--muted); font-size: .86rem; margin: .3rem 0 0; }}
+.details .meta .fest {{ color: var(--accent); font-weight: 600; }}
+.details .award {{
+  display: inline-block; font-size: .75rem; color: var(--accent); margin: .5rem 0 0;
   border: 1px solid var(--accent); border-radius: 6px; padding: .05rem .45rem;
 }}
-.item .meta {{ color: var(--muted); font-size: .86rem; margin: .25rem 0 0; }}
-.item .meta .fest {{ color: var(--accent); font-weight: 600; }}
 .taglist {{ display: flex; flex-wrap: wrap; gap: .3rem; margin: .5rem 0 0; }}
 .taglist .g {{
   font-size: .72rem; color: var(--muted); background: var(--chip);
   border: 1px solid var(--line); border-radius: 999px; padding: .08rem .5rem;
 }}
 .taglist .age {{ color: #062018; background: var(--age); border-color: var(--age); font-weight: 600; }}
-.item .synopsis {{ font-size: .9rem; color: #c7ccd6; margin: .5rem 0 0; }}
+.details .synopsis {{ font-size: .9rem; color: #c7ccd6; margin: .5rem 0 0; }}
 footer {{ color: var(--muted); text-align: center; padding: 2rem 1rem; font-size: .82rem; }}
 .empty {{ color: var(--muted); padding: 3rem 0; text-align: center; }}
 #noresults {{ display: none; }}
@@ -176,9 +198,27 @@ def _facet(label: str, dim: str, values: Iterable) -> str:
 
 
 def _render_item(film: Film) -> str:
-    award_html = f'<span class="award">🏆 {_esc(film.award)}</span>' if film.award else ""
+    # --- compact one-line summary ---
+    trophy = (
+        f'<span class="trophy" title="{_esc(film.award)}">🏆</span>'
+        if film.award else ""
+    )
+    # Age-related tags (OK for 5/12 or Unrated) sit on the compact line.
+    age_badges = "".join(
+        f'<span class="age-chip{" age" if t in AGE_TAGS else ""}">{_esc(t)}</span>'
+        for t in film.tag_list
+        if t in AGE_TAGS or t == UNRATED
+    )
+    summary = (
+        f'<summary>'
+        f'<span class="s-main"><span class="s-title">{_esc(film.title)}</span> '
+        f'<span class="s-sub">&middot; <span class="fest">{_esc(film.festival)}</span> '
+        f'&middot; {film.year}</span></span>'
+        f'<span class="s-badges">{trophy}{age_badges}</span>'
+        f'</summary>'
+    )
 
-    # Festival lives in the film's info now (no per-festival sections).
+    # --- expanded details ---
     meta_bits = [f'<span class="fest">{_esc(film.festival)}</span>', str(film.year)]
     if film.director:
         meta_bits.append(_esc(film.director))
@@ -187,26 +227,27 @@ def _render_item(film: Film) -> str:
     if film.section:
         meta_bits.append(_esc(film.section))
     meta = " &middot; ".join(meta_bits)
+    award_html = f'<div class="award">🏆 {_esc(film.award)}</div>' if film.award else ""
 
     pills = [f'<span class="g">{_esc(g)}</span>' for g in film.genres]
     for t in film.tag_list:
         cls = "g age" if t in AGE_TAGS else "g"
         pills.append(f'<span class="{cls}">{_esc(t)}</span>')
     pills_html = f'<div class="taglist">{"".join(pills)}</div>' if pills else ""
-
     synopsis_html = (
         f'<p class="synopsis">{_esc(film.synopsis)}</p>' if film.synopsis else ""
     )
+    details = (
+        f'<div class="details"><div class="meta">{meta}</div>'
+        f"{award_html}{pills_html}{synopsis_html}</div>"
+    )
+
     data_genre = _esc("|".join(film.genres))
     data_tags = _esc("|".join(film.tag_list))
     return (
-        f'<div class="item" data-festival="{_esc(film.festival)}" '
+        f'<details class="item" data-festival="{_esc(film.festival)}" '
         f'data-year="{film.year}" data-genre="{data_genre}" data-tags="{data_tags}">'
-        f'<div class="head"><span class="title">{_esc(film.title)}</span>{award_html}</div>'
-        f'<div class="meta">{meta}</div>'
-        f"{pills_html}"
-        f"{synopsis_html}"
-        "</div>"
+        f"{summary}{details}</details>"
     )
 
 
