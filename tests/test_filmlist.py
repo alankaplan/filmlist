@@ -11,9 +11,10 @@ from filmlist.fetch import (
     fetch_award_winners,
     fetch_summaries,
 )
+from filmlist import tmdb
 from filmlist.generate import render_html
 from filmlist.models import Film
-from filmlist.tagging import AGE_5, AGE_12, AGE_16, AGE_18, age_tags
+from filmlist.tagging import AGE_5, AGE_12, age_tags
 
 
 def make_film(**kw) -> Film:
@@ -54,32 +55,90 @@ def test_tag_list_property():
     assert make_film(tags="").tag_list == []
 
 
-# --- tagging --------------------------------------------------------------
-def test_age_tags_kid_friendly():
+# --- tagging: genre fallback ----------------------------------------------
+def test_age_tags_genre_fallback():
     assert age_tags(["Animation"]) == [AGE_5, AGE_12]
     assert age_tags(["Family film", "Comedy"]) == [AGE_5, AGE_12]
-
-
-def test_age_tags_tween():
     assert age_tags(["Drama"]) == [AGE_12]
-    assert age_tags(["Documentary"]) == [AGE_12]
+    # Mature / adult / unknown genres are too mature for either age -> no tag.
+    assert age_tags(["Horror"]) == []
+    assert age_tags(["Erotic thriller"]) == []
+    assert age_tags(["Avant-garde"]) == []
+    assert age_tags([]) == []
 
 
-def test_age_tags_mature_and_adult():
-    assert age_tags(["Horror"]) == [AGE_16]
-    assert age_tags(["War film"]) == [AGE_16]
-    assert age_tags(["Erotic thriller"]) == [AGE_18]
+# --- tagging: certification-driven ----------------------------------------
+def test_age_tags_from_certification():
+    assert age_tags([], certification="G") == [AGE_5, AGE_12]
+    assert age_tags([], certification="U") == [AGE_5, AGE_12]
+    assert age_tags([], certification="PG") == [AGE_12]        # not for 5
+    assert age_tags([], certification="12A") == [AGE_12]
+    assert age_tags([], certification="PG-13") == []           # 13+, not for 12
+    assert age_tags([], certification="R") == []
+    assert age_tags([], certification="16") == []              # numeric cert
 
 
-def test_age_tags_unknown_is_conservative():
-    # An unrecognised genre is treated as mature, never kid-safe.
-    assert age_tags(["Avant-garde"]) == [AGE_16]
-    assert age_tags([]) == [AGE_16]
+def test_certification_overrides_genre():
+    # A kid genre with an adult certification is not marked kid-friendly.
+    assert age_tags(["Animation"], certification="R") == []
 
 
-def test_age_tags_adult_beats_kid():
-    # A mix containing an adult signal is not marked kid-friendly.
-    assert age_tags(["Animation", "Pornographic film"]) == [AGE_18]
+def test_keywords_only_tighten():
+    # A G rating with a mature keyword loses the "OK for 5" tag.
+    assert age_tags([], certification="G", keywords=["nudity"]) == [AGE_12]
+    # A hard keyword removes both tags even on a G rating.
+    assert age_tags([], certification="G", keywords=["graphic violence"]) == []
+    # Keywords also tighten the genre fallback (no certification).
+    assert age_tags(["Animation"], keywords=["nudity"]) == [AGE_12]
+
+
+# --- tmdb client ----------------------------------------------------------
+def _tmdb_fetcher(routes):
+    """Build a fake fetcher that returns canned JSON based on the URL."""
+    def fetch(url, params):
+        for needle, payload in routes.items():
+            if needle in url:
+                return payload
+        raise AssertionError(f"unexpected url {url}")
+    return fetch
+
+
+def test_tmdb_certification_prefers_us_then_gb():
+    payload = {"results": [
+        {"iso_3166_1": "GB", "release_dates": [{"certification": "15"}]},
+        {"iso_3166_1": "US", "release_dates": [{"certification": ""}, {"certification": "R"}]},
+    ]}
+    fetch = _tmdb_fetcher({"release_dates": payload})
+    assert tmdb.certification("42", "key", fetch) == ("US", "R")
+
+
+def test_tmdb_certification_falls_back_to_any_country():
+    payload = {"results": [{"iso_3166_1": "FR", "release_dates": [{"certification": "12"}]}]}
+    fetch = _tmdb_fetcher({"release_dates": payload})
+    assert tmdb.certification("42", "key", fetch) == ("FR", "12")
+
+
+def test_tmdb_keywords_lowercased():
+    payload = {"keywords": [{"id": 1, "name": "Nudity"}, {"id": 2, "name": "Drug Abuse"}]}
+    fetch = _tmdb_fetcher({"keywords": payload})
+    assert tmdb.keywords("42", "key", fetch) == ["nudity", "drug abuse"]
+
+
+def test_tmdb_resolve_id_direct_and_via_imdb():
+    find = {"movie_results": [{"id": 999}]}
+    fetch = _tmdb_fetcher({"/find/": find})
+    assert tmdb.resolve_id("123", "", "key", fetch) == "123"          # direct
+    assert tmdb.resolve_id("", "tt0111161", "key", fetch) == "999"    # via /find
+
+
+def test_tmdb_content_signals_combines_calls():
+    routes = {
+        "release_dates": {"results": [{"iso_3166_1": "US", "release_dates": [{"certification": "PG-13"}]}]},
+        "keywords": {"keywords": [{"name": "Violence"}]},
+    }
+    rating, kws = tmdb.content_signals("55", "", "key", _tmdb_fetcher(routes))
+    assert rating == "PG-13"
+    assert kws == ["violence"]
 
 
 # --- database -------------------------------------------------------------
@@ -114,6 +173,20 @@ def test_merge_preserves_curated_fields(tmp_path):
         assert got.section == "Competition"       # preserved
         assert got.director == "Sean Baker"       # filled
         assert got.genre == "Comedy"              # filled
+
+
+def test_retag_strips_obsolete_age_tags_and_keeps_custom(tmp_path):
+    from filmlist import cli
+    dbp = tmp_path / "t.db"
+    with Database(dbp) as db:
+        db.add(make_film(title="X", genre="Animation", tags="16+, favorite"),
+               source="pull")
+    cli.main(["--db", str(dbp), "retag"])
+    with Database(dbp) as db:
+        got = db.all()[0]
+    assert "16+" not in got.tag_list          # obsolete age tag removed
+    assert "favorite" in got.tag_list         # custom tag preserved
+    assert AGE_5 in got.tag_list              # recomputed from Animation genre
 
 
 def test_migrates_legacy_schema(tmp_path):
@@ -190,6 +263,8 @@ SPARQL_SAMPLE = {
                 "genres": {"value": "Comedy, Drama"},
                 "description": {"value": "2024 film"},
                 "article": {"value": "https://en.wikipedia.org/wiki/Anora_(film)"},
+                "tmdb": {"value": "12345"},
+                "imdb": {"value": "tt0000001"},
             },
             {  # no title -> skipped
                 "award": {"value": "Grand Prix"},
@@ -200,13 +275,14 @@ SPARQL_SAMPLE = {
 }
 
 
-def test_parse_results_builds_films_and_titles():
-    films, titles = _parse_results(SPARQL_SAMPLE, "Cannes", 2024)
+def test_parse_results_builds_films_titles_and_ids():
+    films, titles, ext = _parse_results(SPARQL_SAMPLE, "Cannes", 2024)
     assert [f.title for f in films] == ["Anora"]
     assert films[0].genre == "Comedy, Drama"
     assert films[0].award == "Palme d'Or"
     assert films[0].year == 2024
     assert titles == {0: "Anora (film)"}
+    assert ext == {0: ("12345", "tt0000001")}
 
 
 def test_fetch_award_winners_enriches_with_summary():
@@ -221,7 +297,7 @@ def test_fetch_award_winners_enriches_with_summary():
     def fake_fetch(endpoint, params):
         return wiki_sample if "titles" in params else SPARQL_SAMPLE
 
-    films = fetch_award_winners("Cannes", 2024, fetcher=fake_fetch)
+    films = fetch_award_winners("Cannes", 2024, fetcher=fake_fetch, with_tmdb=False)
     assert len(films) == 1
     assert films[0].synopsis.startswith("Anora is a 2024 film")
     # Pulled films are auto-tagged for age from their genres (Comedy, Drama).
@@ -244,8 +320,8 @@ def test_render_html_has_four_multiselect_facets_and_data():
     films = [
         make_film(title="Anora", festival="Cannes", year=2024,
                   genre="Comedy, Drama", award="Palme d'Or", tags="OK for 12"),
-        make_film(title="Joker", festival="Venice", year=2019, genre="Thriller",
-                  tags="16+"),
+        make_film(title="Flow", festival="Sundance", year=2024, genre="Animation",
+                  tags="OK for 5, OK for 12"),
     ]
     html = render_html(films)
     for dim in ("festival", "year", "genre", "tags"):
@@ -253,10 +329,11 @@ def test_render_html_has_four_multiselect_facets_and_data():
     # Card data attributes drive the additive client-side filter.
     assert 'data-genre="Comedy|Drama"' in html
     assert 'data-tags="OK for 12"' in html
+    assert 'data-tags="OK for 5|OK for 12"' in html
     assert 'data-year="2024"' in html
     # Facet chips are populated from the data.
     assert '<button class="chip" data-val="Comedy">Comedy</button>' in html
-    assert '<button class="chip" data-val="16+">16+</button>' in html
+    assert '<button class="chip" data-val="OK for 5">OK for 5</button>' in html
 
 
 def test_render_html_escapes():

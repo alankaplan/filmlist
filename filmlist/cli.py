@@ -36,6 +36,12 @@ def cmd_add(args: argparse.Namespace) -> int:
 
 
 def cmd_pull(args: argparse.Namespace) -> int:
+    from . import tmdb
+    if tmdb.api_key():
+        print("TMDB enrichment: on (certification + keywords)")
+    else:
+        print("TMDB enrichment: off (set TMDB_API_KEY for rating-based age tags); "
+              "using genre-based tags")
     try:
         if args.festival:
             films = fetch_award_winners(args.festival, args.year)
@@ -80,13 +86,14 @@ def cmd_delete(args: argparse.Namespace) -> int:
 
 def cmd_retag(args: argparse.Namespace) -> int:
     """Recompute automatic age tags for every film from its genres."""
+    from .tagging import AGE_TAGS, OBSOLETE_AGE_TAGS
+    stale = set(AGE_TAGS) | set(OBSOLETE_AGE_TAGS)
     with Database(args.db) as db:
         films = db.all()
         for f in films:
             auto = age_tags(f.genres)
-            # Preserve any non-age tags already present.
-            from .tagging import AGE_TAGS
-            kept = [t for t in f.tag_list if t not in AGE_TAGS]
+            # Preserve non-age tags; drop any current or obsolete age tags.
+            kept = [t for t in f.tag_list if t not in stale]
             db.set_tags(f.id, ", ".join(dict.fromkeys(auto + kept)))
     print(f"Re-tagged {len(films)} film(s).")
     return 0

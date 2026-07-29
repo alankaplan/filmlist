@@ -107,7 +107,11 @@ footer {{ color: var(--muted); text-align: center; padding: 2rem 1rem; font-size
   {body}
   <div class="empty" id="noresults">No films match these filters.</div>
 </main>
-<footer>Built with filmlist &middot; a database of movies from major film festivals</footer>
+<footer>
+  Built with filmlist &middot; a database of movies from major film festivals<br>
+  Data from Wikidata &amp; Wikipedia. Age tags use the TMDB API but this product
+  is not endorsed or certified by TMDB.
+</footer>
 <script>
 const DIMS = ['festival', 'year', 'genre', 'tags'];
 const active = {{festival: new Set(), year: new Set(), genre: new Set(), tags: new Set()}};

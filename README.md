@@ -10,13 +10,15 @@ winners from **Cannes, Venice, Berlin, Sundance, SXSW, Toronto, Locarno,** and
 for **festival, year, genre, and tags** — pick several values in a filter to
 widen the results, and combine filters to narrow them.
 
-Every film is also **auto-tagged for age appropriateness** (for a 5- and a
-12-year-old) based on its genres.
+Every film is also **auto-tagged for age appropriateness** — specifically for a
+**5-year-old** and a **12-year-old** — using official age certifications and
+content keywords from **TMDB** when available, falling back to genre.
 
 ## Requirements
 
 - Python 3.9+ (standard library only — SQLite ships with Python)
 - Outbound HTTPS to `query.wikidata.org` and `en.wikipedia.org` for `pull`
+- Optional: a free **TMDB API key** (`TMDB_API_KEY`) for reliable age tags
 - `pytest` only if you want to run the tests
 
 ## Quick start
@@ -53,23 +55,42 @@ All commands share an optional `--db PATH` flag (defaults to `filmlist.db`).
 | `delete ID` | Remove a film by its id. |
 | `generate [-o OUTPUT] [--include-manual]` | Render the database to an HTML page. |
 
-### Tags and age appropriateness
+### Age appropriateness (5 and 12)
 
-Every pulled (and hand-added) film is automatically tagged for age
-appropriateness from its genres:
+Every film is assessed for two ages and tagged with whichever it passes:
 
 | Tag | Meaning |
 | --- | --- |
-| `OK for 5` | Suitable for a 5-year-old (kid-friendly genres — animation, family). Also implies `OK for 12`. |
-| `OK for 12` | Suitable for a 12-year-old (general genres — drama, comedy, documentary). |
-| `16+` | Mature themes, or genre unknown (conservative default). |
-| `18+` | Explicitly adult genres. |
+| `OK for 5` | Suitable for a 5-year-old (also implies `OK for 12`). |
+| `OK for 12` | Suitable for a 12-year-old. |
+| _(neither)_ | Too mature for both — no age tag shown. |
 
-The tags are a transparent heuristic in `filmlist/tagging.py` — a rough
-automated estimate, not an official rating. Adjust the genre keyword lists
-there to tune it, then run `python main.py retag` to recompute existing rows.
-You can also attach your own tags to a hand-added film with
-`add ... --tags "must-watch, rewatch"`; the age tags are added on top.
+The assessment prefers real data, in this order (see `filmlist/tagging.py`):
+
+1. **Official age certification** from TMDB (`/movie/{id}/release_dates`),
+   mapped to a minimum age — e.g. G/U → *OK for 5*; PG, 12/12A → *OK for 12*;
+   PG-13, R and up → neither. Thresholds follow each rating body's own
+   guidance.
+2. **Content keywords** from TMDB (nudity, graphic violence, drugs…) — these
+   only ever *tighten* the rating, never loosen it.
+3. **Genre heuristic** as a last resort, so films with no TMDB data still get
+   assessed.
+
+Films are linked to TMDB via their Wikidata TMDB id (P4947) or IMDb id (P345),
+so no title guessing is needed. Set the API key to enable it:
+
+```bash
+export TMDB_API_KEY=your_v3_api_key
+python main.py pull 2024        # "TMDB enrichment: on"
+```
+
+Without a key, `pull` still works and falls back to the genre-based estimate
+(the age tags are then a rough heuristic, not an official rating). Re-running
+`pull` refreshes the TMDB-based tags; `python main.py retag` recomputes the
+genre-based fallback for rows already in the database. You can also attach your
+own tags to a hand-added film with `add ... --tags "must-watch"`.
+
+> This product uses the TMDB API but is not endorsed or certified by TMDB.
 
 ### Pulling award winners
 
@@ -110,7 +131,8 @@ filmlist/
   models.py      # Film dataclass (incl. genre, tags) + festival list & validation
   db.py          # SQLite persistence (source tracking, migrations, upserts)
   fetch.py       # Wikidata award fetcher + Wikipedia summary enrichment
-  tagging.py     # automatic age-appropriateness tagging from genres
+  tmdb.py        # TMDB client: age certifications + content keywords
+  tagging.py     # age tagging from certification, keywords, then genre
   generate.py    # HTML page renderer with additive festival/year/genre/tag filters
   cli.py         # argparse command-line interface
 tests/           # pytest suite

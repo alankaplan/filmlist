@@ -106,6 +106,8 @@ def build_query(award_labels: list[str], year: int) -> str:
     return f"""
 SELECT ?award ?filmLabel ?article
        (SAMPLE(?descRaw) AS ?description)
+       (SAMPLE(?tmdbId) AS ?tmdb)
+       (SAMPLE(?imdbId) AS ?imdb)
        (GROUP_CONCAT(DISTINCT ?directorLabel; separator=", ") AS ?directors)
        (GROUP_CONCAT(DISTINCT ?countryLabel;  separator=", ") AS ?countries)
        (GROUP_CONCAT(DISTINCT ?genreLabel;    separator=", ") AS ?genres)
@@ -125,6 +127,8 @@ WHERE {{
   OPTIONAL {{ ?film wdt:P136 ?genre .
              ?genre rdfs:label ?genreLabel . FILTER(LANG(?genreLabel)="en") }}
   OPTIONAL {{ ?film schema:description ?descRaw . FILTER(LANG(?descRaw)="en") }}
+  OPTIONAL {{ ?film wdt:P4947 ?tmdbId . }}
+  OPTIONAL {{ ?film wdt:P345 ?imdbId . }}
   OPTIONAL {{ ?article schema:about ?film ;
                        schema:isPartOf <https://en.wikipedia.org/> . }}
   ?film rdfs:label ?filmLabel . FILTER(LANG(?filmLabel)="en")
@@ -142,11 +146,15 @@ def _title_from_article(url: str) -> str:
     return urllib.parse.unquote(slug).replace("_", " ")
 
 
-def _parse_results(data: dict, festival: str, year: int) -> tuple[list[Film], dict[int, str]]:
-    """Parse SPARQL JSON into Films. Returns the films and a map from each
-    film's index to its Wikipedia article title (for summary enrichment)."""
+def _parse_results(
+    data: dict, festival: str, year: int
+) -> tuple[list[Film], dict[int, str], dict[int, tuple[str, str]]]:
+    """Parse SPARQL JSON into Films. Returns the films, a map from each film's
+    index to its Wikipedia article title (for summary enrichment), and a map
+    from index to its ``(tmdb_id, imdb_id)`` (for TMDB enrichment)."""
     films: list[Film] = []
     article_titles: dict[int, str] = {}
+    external_ids: dict[int, tuple[str, str]] = {}
     for binding in data.get("results", {}).get("bindings", []):
         title = binding.get("filmLabel", {}).get("value", "").strip()
         award = binding.get("award", {}).get("value", "").strip()
@@ -166,14 +174,18 @@ def _parse_results(data: dict, festival: str, year: int) -> tuple[list[Film], di
             )
         except ValueError:
             continue
-        # Auto age-appropriateness tags, derived from the film's genres.
+        # Provisional genre-only age tags; upgraded from TMDB when enabled.
         film.tags = ", ".join(age_tags(film.genres))
         idx = len(films)
         films.append(film)
         article = _title_from_article(binding.get("article", {}).get("value", ""))
         if article:
             article_titles[idx] = article
-    return films, article_titles
+        tmdb_id = binding.get("tmdb", {}).get("value", "").strip()
+        imdb_id = binding.get("imdb", {}).get("value", "").strip()
+        if tmdb_id or imdb_id:
+            external_ids[idx] = (tmdb_id, imdb_id)
+    return films, article_titles, external_ids
 
 
 # ---------------------------------------------------------------------------
@@ -260,12 +272,33 @@ def _http_get(url: str, params: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+def _apply_tmdb_tags(
+    films: list[Film],
+    external_ids: dict[int, tuple[str, str]],
+    fetcher: Callable[[str, dict], dict],
+) -> None:
+    """Upgrade each film's age tags using TMDB certification + keywords when a
+    ``TMDB_API_KEY`` is configured. No key or no data leaves the genre-based
+    tags in place. Imported lazily to avoid a circular import."""
+    from . import tmdb
+
+    key = tmdb.api_key()
+    if not key:
+        return
+    for idx, film in enumerate(films):
+        tmdb_id, imdb_id = external_ids.get(idx, ("", ""))
+        rating, keywords = tmdb.content_signals(tmdb_id, imdb_id, key, fetcher)
+        if rating or keywords:
+            film.tags = ", ".join(age_tags(film.genres, rating, keywords))
+
+
 def fetch_award_winners(
     festival: str,
     year: int,
     endpoint: str = WIKIDATA_ENDPOINT,
     fetcher: Optional[Callable[[str, dict], dict]] = None,
     with_summaries: bool = True,
+    with_tmdb: bool = True,
 ) -> list[Film]:
     """Fetch a single festival's award winners for a single year."""
     fetcher = fetcher or _http_get
@@ -276,13 +309,16 @@ def fetch_award_winners(
             f"Known: {', '.join(sorted(FESTIVAL_AWARDS))}"
         )
     data = fetcher(endpoint, {"query": build_query(awards, year), "format": "json"})
-    films, article_titles = _parse_results(data, festival, year)
+    films, article_titles, external_ids = _parse_results(data, festival, year)
 
     if with_summaries and article_titles:
         summaries = fetch_summaries(list(article_titles.values()), fetcher=fetcher)
         for idx, title in article_titles.items():
             if title in summaries:
                 films[idx].synopsis = summaries[title]
+
+    if with_tmdb:
+        _apply_tmdb_tags(films, external_ids, fetcher)
     return films
 
 
@@ -291,6 +327,7 @@ def fetch_all_awards(
     endpoint: str = WIKIDATA_ENDPOINT,
     fetcher: Optional[Callable[[str, dict], dict]] = None,
     with_summaries: bool = True,
+    with_tmdb: bool = True,
 ) -> list[Film]:
     """Fetch award winners across every mapped festival for a single year."""
     films: list[Film] = []
@@ -302,6 +339,7 @@ def fetch_all_awards(
                 endpoint=endpoint,
                 fetcher=fetcher,
                 with_summaries=with_summaries,
+                with_tmdb=with_tmdb,
             )
         )
     return films
