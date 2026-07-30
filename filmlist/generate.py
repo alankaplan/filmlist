@@ -1,7 +1,8 @@
 """Render the film database to a single, self-contained HTML page.
 
-The page is a compact list — one line per film (title, festival, year, award
-and age tag) that expands on click to show the full details — with four
+The page is a compact list — one line per movie (title, festival(s), year,
+award and age tag) that expands on click to show the full details. A film that
+played several festivals is merged into a single item naming each. Four
 additive, multi-select filters: festival, year, genre, and tag. Within a
 filter, selecting several values widens the results (OR); across filters they
 narrow (AND). Expand/collapse uses native <details>/<summary>, so no extra JS."""
@@ -9,6 +10,7 @@ narrow (AND). Expand/collapse uses native <details>/<summary>, so no extra JS.""
 from __future__ import annotations
 
 import html
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Iterable
@@ -156,7 +158,6 @@ const countEl = document.getElementById('count');
 const noResults = document.getElementById('noresults');
 
 function itemValues(item, dim) {{
-  if (dim === 'festival') return [item.dataset.festival];
   if (dim === 'year') return [item.dataset.year];
   return (item.dataset[dim] || '').split('|').filter(Boolean);
 }}
@@ -239,40 +240,110 @@ def _dropdown(label: str, dim: str, values: Iterable) -> str:
     )
 
 
-def _render_item(film: Film) -> str:
+@dataclass
+class _Appearance:
+    festival: str
+    award: str
+    section: str
+
+
+@dataclass
+class MergedFilm:
+    """One movie, possibly across several festivals, for display."""
+
+    title: str
+    year: int
+    director: str = ""
+    country: str = ""
+    synopsis: str = ""
+    genres: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    appearances: list[_Appearance] = field(default_factory=list)
+
+    @property
+    def festivals(self) -> list[str]:
+        seen: list[str] = []
+        for a in self.appearances:
+            if a.festival not in seen:
+                seen.append(a.festival)
+        return seen
+
+
+def _merge_films(films: Iterable[Film]) -> list[MergedFilm]:
+    """Combine rows for the same movie (title + year) across festivals."""
+    order: list[tuple] = []
+    by_key: dict[tuple, MergedFilm] = {}
+    for f in films:
+        key = (f.title.casefold(), f.year)
+        m = by_key.get(key)
+        if m is None:
+            m = MergedFilm(
+                title=f.title, year=f.year, director=f.director,
+                country=f.country, synopsis=f.synopsis,
+                genres=list(f.genres), tags=list(f.tag_list),
+            )
+            by_key[key] = m
+            order.append(key)
+        else:
+            m.director = m.director or f.director
+            m.country = m.country or f.country
+            m.synopsis = m.synopsis or f.synopsis
+            for g in f.genres:
+                if g not in m.genres:
+                    m.genres.append(g)
+            for t in f.tag_list:
+                if t not in m.tags:
+                    m.tags.append(t)
+        m.appearances.append(_Appearance(f.festival, f.award, f.section))
+
+    # A real age tag on any festival row supersedes "Unrated" from another.
+    for m in by_key.values():
+        if any(t in AGE_TAGS for t in m.tags):
+            m.tags = [t for t in m.tags if t != UNRATED]
+    return [by_key[k] for k in order]
+
+
+def _render_item(film: MergedFilm) -> str:
+    festivals = film.festivals
+    fest_html = " &middot; ".join(f'<span class="fest">{_esc(f)}</span>' for f in festivals)
+    awarded = [a for a in film.appearances if a.award]
+
     # --- compact one-line summary ---
-    trophy = (
-        f'<span class="trophy" title="{_esc(film.award)}">🏆</span>'
-        if film.award else ""
-    )
+    trophy = ""
+    if awarded:
+        tip = "; ".join(f"{a.award} ({a.festival})" for a in awarded)
+        trophy = f'<span class="trophy" title="{_esc(tip)}">🏆</span>'
     # Age-related tags (OK for 5/12 or Unrated) sit on the compact line.
     age_badges = "".join(
         f'<span class="age-chip{" age" if t in AGE_TAGS else ""}">{_esc(t)}</span>'
-        for t in film.tag_list
+        for t in film.tags
         if t in AGE_TAGS or t == UNRATED
     )
     summary = (
         f'<summary>'
         f'<span class="s-main"><span class="s-title">{_esc(film.title)}</span> '
-        f'<span class="s-sub">&middot; <span class="fest">{_esc(film.festival)}</span> '
-        f'&middot; {film.year}</span></span>'
+        f'<span class="s-sub">&middot; {fest_html} &middot; {film.year}</span></span>'
         f'<span class="s-badges">{trophy}{age_badges}</span>'
         f'</summary>'
     )
 
     # --- expanded details ---
-    meta_bits = [f'<span class="fest">{_esc(film.festival)}</span>', str(film.year)]
+    meta_bits = [fest_html, str(film.year)]
     if film.director:
         meta_bits.append(_esc(film.director))
     if film.country:
         meta_bits.append(_esc(film.country))
-    if film.section:
-        meta_bits.append(_esc(film.section))
     meta = " &middot; ".join(meta_bits)
-    award_html = f'<div class="award">🏆 {_esc(film.award)}</div>' if film.award else ""
+
+    multi = len(festivals) > 1
+    award_html = "".join(
+        f'<div class="award">🏆 {_esc(a.award)}'
+        f'{f" &mdash; {_esc(a.festival)}" if multi else ""}</div>'
+        for a in awarded
+    )
 
     pills = [f'<span class="g">{_esc(g)}</span>' for g in film.genres]
-    for t in film.tag_list:
+    for t in film.tags:
         cls = "g age" if t in AGE_TAGS else "g"
         pills.append(f'<span class="{cls}">{_esc(t)}</span>')
     pills_html = f'<div class="taglist">{"".join(pills)}</div>' if pills else ""
@@ -284,10 +355,11 @@ def _render_item(film: Film) -> str:
         f"{award_html}{pills_html}{synopsis_html}</div>"
     )
 
+    data_festival = _esc("|".join(festivals))
     data_genre = _esc("|".join(film.genres))
-    data_tags = _esc("|".join(film.tag_list))
+    data_tags = _esc("|".join(film.tags))
     return (
-        f'<details class="item" data-festival="{_esc(film.festival)}" '
+        f'<details class="item" data-festival="{data_festival}" '
         f'data-year="{film.year}" data-genre="{data_genre}" data-tags="{data_tags}">'
         f"{summary}{details}</details>"
     )
@@ -302,17 +374,16 @@ def _sort_tags(tags: set[str]) -> list[str]:
 
 def render_html(films: Iterable[Film]) -> str:
     """Return a complete HTML document for the given films."""
-    films = list(films)
-    festivals: list[str] = []
+    merged = _merge_films(films)
+    festivals: set[str] = set()
     genres: set[str] = set()
     tags: set[str] = set()
     years: set[int] = set()
-    for film in films:
-        if film.festival not in festivals:
-            festivals.append(film.festival)
-        years.add(film.year)
-        genres.update(film.genres)
-        tags.update(film.tag_list)
+    for m in merged:
+        festivals.update(m.festivals)
+        years.add(m.year)
+        genres.update(m.genres)
+        tags.update(m.tags)
 
     facets = "\n    ".join([
         _dropdown("Festival", "festival", sorted(festivals)),
@@ -321,14 +392,14 @@ def render_html(films: Iterable[Film]) -> str:
         _dropdown("Tags", "tags", _sort_tags(tags)),
     ])
 
-    if not films:
+    if not merged:
         body = '<div class="empty">No films yet. Run <code>filmlist pull &lt;year&gt;</code>.</div>'
     else:
-        rows = "\n".join(_render_item(f) for f in films)
+        rows = "\n".join(_render_item(m) for m in merged)
         body = f'<div class="list">{rows}</div>'
 
     return PAGE_TEMPLATE.format(
-        count=len(films),
+        count=len(merged),
         fest_count=len(festivals),
         today=date.today().isoformat(),
         facets=facets,

@@ -360,6 +360,28 @@ def test_render_html_has_four_multiselect_facets_and_data():
     assert '<span class="g">Unrated</span>' in html
 
 
+def test_render_merges_same_film_across_festivals():
+    films = [
+        make_film(title="Poor Things", festival="Venice", year=2023,
+                  genre="Comedy", award="Golden Lion", tags="OK for 12"),
+        make_film(title="Poor Things", festival="Toronto", year=2023,
+                  genre="Drama", award="", tags="OK for 12"),
+    ]
+    html = render_html(films)
+    # One combined item, listing both festivals in its data + summary.
+    assert html.count('<details class="item"') == 1
+    assert 'data-festival="Venice|Toronto"' in html
+    assert '<span class="fest">Venice</span>' in html
+    assert '<span class="fest">Toronto</span>' in html
+    # Genres from both rows are unioned onto the one item.
+    assert 'data-genre="Comedy|Drama"' in html
+    # Header/count reflect one distinct movie.
+    assert "1 films across 2 festivals" in html
+    # Both festivals remain selectable in the Festival dropdown.
+    assert '<input type="checkbox" value="Venice">' in html
+    assert '<input type="checkbox" value="Toronto">' in html
+
+
 def test_render_html_escapes():
     films = [make_film(title="<script>evil</script>")]
     html = render_html(films)
