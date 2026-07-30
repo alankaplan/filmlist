@@ -46,21 +46,35 @@ main {{ max-width: 1000px; margin: 0 auto; padding: 1.5rem; }}
   margin: 0 0 1.6rem; padding: 1rem 1.1rem; background: var(--panel);
   border: 1px solid var(--line); border-radius: 10px;
 }}
-.facet {{ margin: 0 0 .8rem; }}
-.facet:last-of-type {{ margin-bottom: 0; }}
-.facet .flabel {{
-  font-size: .72rem; text-transform: uppercase; letter-spacing: .06em;
-  color: var(--muted); margin: 0 0 .4rem;
-}}
-.chips {{ display: flex; flex-wrap: wrap; gap: .4rem; }}
-.chip {{
+.facets {{ display: flex; flex-wrap: wrap; gap: .6rem; }}
+/* One checkbox dropdown per filter. */
+.dd {{ position: relative; }}
+.dd > summary {{
+  list-style: none; cursor: pointer; user-select: none;
   border: 1px solid var(--line); background: var(--chip); color: var(--text);
-  padding: .28rem .7rem; border-radius: 999px; cursor: pointer; font-size: .82rem;
+  padding: .4rem .8rem; border-radius: 8px; font-size: .85rem;
+  display: inline-flex; align-items: center; gap: .4rem;
 }}
-.chip:hover {{ border-color: var(--accent); }}
-.chip.active {{ background: var(--accent); color: #1a1204; border-color: var(--accent); font-weight: 600; }}
-.chips[data-dim="tags"] .chip.active {{ background: var(--age); border-color: var(--age); color: #06231a; }}
-.toolbar {{ display: flex; align-items: center; gap: 1rem; margin-top: .9rem; padding-top: .8rem; border-top: 1px solid var(--line); }}
+.dd > summary::-webkit-details-marker {{ display: none; }}
+.dd > summary::after {{ content: "\\25BE"; color: var(--muted); font-size: .7rem; }}
+.dd[open] > summary, .dd > summary:hover {{ border-color: var(--accent); }}
+.dd-count {{
+  background: var(--accent); color: #1a1204; font-weight: 600; font-size: .7rem;
+  border-radius: 999px; padding: .02rem .4rem;
+}}
+.dd-panel {{
+  position: absolute; z-index: 20; top: calc(100% + .3rem); left: 0;
+  min-width: 12rem; max-height: 16rem; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: .3rem; box-shadow: 0 8px 24px rgba(0,0,0,.4);
+}}
+.dd-opt {{
+  display: flex; align-items: center; gap: .5rem; cursor: pointer;
+  padding: .3rem .5rem; border-radius: 6px; font-size: .85rem; white-space: nowrap;
+}}
+.dd-opt:hover {{ background: var(--chip); }}
+.dd-opt input {{ accent-color: var(--accent); width: 1rem; height: 1rem; }}
+.toolbar {{ display: flex; align-items: center; gap: 1rem; margin-top: 1rem; padding-top: .8rem; border-top: 1px solid var(--line); }}
 #count {{ color: var(--muted); font-size: .9rem; }}
 #clear {{
   margin-left: auto; background: none; border: 1px solid var(--line); color: var(--muted);
@@ -120,7 +134,7 @@ footer {{ color: var(--muted); text-align: center; padding: 2rem 1rem; font-size
 </div></header>
 <main>
   <div class="controls">
-    {facets}
+    <div class="facets">{facets}</div>
     <div class="toolbar">
       <span id="count"></span>
       <button id="clear">Clear filters</button>
@@ -161,17 +175,42 @@ function apply() {{
   noResults.style.display = visible ? 'none' : '';
 }}
 
-document.querySelectorAll('.chip').forEach(chip => chip.addEventListener('click', () => {{
-  const dim = chip.parentElement.dataset.dim;
-  const val = chip.dataset.val;
-  if (active[dim].has(val)) {{ active[dim].delete(val); chip.classList.remove('active'); }}
-  else {{ active[dim].add(val); chip.classList.add('active'); }}
-  apply();
-}}));
+const dropdowns = Array.from(document.querySelectorAll('.dd'));
+
+function updateCount(dd) {{
+  const n = dd.querySelectorAll('input:checked').length;
+  const badge = dd.querySelector('.dd-count');
+  badge.textContent = n ? n : '';
+  badge.style.display = n ? '' : 'none';
+}}
+
+dropdowns.forEach(dd => {{
+  const dim = dd.dataset.dim;
+  dd.querySelectorAll('.dd-panel input[type=checkbox]').forEach(box => {{
+    box.addEventListener('change', () => {{
+      if (box.checked) active[dim].add(box.value);
+      else active[dim].delete(box.value);
+      updateCount(dd);
+      apply();
+    }});
+  }});
+}});
+
+// Close an open dropdown when clicking outside it, or on Escape.
+document.addEventListener('click', e => {{
+  dropdowns.forEach(dd => {{ if (dd.open && !dd.contains(e.target)) dd.open = false; }});
+}});
+document.addEventListener('keydown', e => {{
+  if (e.key === 'Escape') dropdowns.forEach(dd => {{ dd.open = false; }});
+}});
 
 document.getElementById('clear').addEventListener('click', () => {{
   DIMS.forEach(d => active[d].clear());
-  document.querySelectorAll('.chip.active').forEach(c => c.classList.remove('active'));
+  dropdowns.forEach(dd => {{
+    dd.querySelectorAll('input:checked').forEach(b => {{ b.checked = false; }});
+    updateCount(dd);
+    dd.open = false;
+  }});
   apply();
 }});
 
@@ -186,14 +225,17 @@ def _esc(text: str) -> str:
     return html.escape(text or "")
 
 
-def _facet(label: str, dim: str, values: Iterable) -> str:
-    chips = "".join(
-        f'<button class="chip" data-val="{_esc(str(v))}">{_esc(str(v))}</button>'
+def _dropdown(label: str, dim: str, values: Iterable) -> str:
+    opts = "".join(
+        f'<label class="dd-opt"><input type="checkbox" value="{_esc(str(v))}">'
+        f'<span>{_esc(str(v))}</span></label>'
         for v in values
     )
     return (
-        f'<div class="facet"><div class="flabel">{_esc(label)}</div>'
-        f'<div class="chips" data-dim="{dim}">{chips}</div></div>'
+        f'<details class="dd" data-dim="{dim}">'
+        f'<summary class="dd-btn">{_esc(label)}<span class="dd-count" style="display:none"></span></summary>'
+        f'<div class="dd-panel">{opts}</div>'
+        f'</details>'
     )
 
 
@@ -273,10 +315,10 @@ def render_html(films: Iterable[Film]) -> str:
         tags.update(film.tag_list)
 
     facets = "\n    ".join([
-        _facet("Festival", "festival", sorted(festivals)),
-        _facet("Year", "year", sorted(years, reverse=True)),
-        _facet("Genre", "genre", sorted(genres)),
-        _facet("Tags", "tags", _sort_tags(tags)),
+        _dropdown("Festival", "festival", sorted(festivals)),
+        _dropdown("Year", "year", sorted(years, reverse=True)),
+        _dropdown("Genre", "genre", sorted(genres)),
+        _dropdown("Tags", "tags", _sort_tags(tags)),
     ])
 
     if not films:

@@ -343,19 +343,20 @@ def test_render_html_has_four_multiselect_facets_and_data():
                   tags="Unrated"),
     ]
     html = render_html(films)
+    # Each filter is a checkbox dropdown for its dimension.
     for dim in ("festival", "year", "genre", "tags"):
-        assert f'data-dim="{dim}"' in html
-    # Card data attributes drive the additive client-side filter.
+        assert f'<details class="dd" data-dim="{dim}">' in html
+    # Item data attributes drive the additive client-side filter.
     assert 'data-genre="Comedy|Drama"' in html
     assert 'data-tags="OK for 12"' in html
     assert 'data-tags="OK for 5|OK for 12"' in html
     assert 'data-tags="Unrated"' in html
     assert 'data-year="2024"' in html
-    # Facet chips are populated from the data.
-    assert '<button class="chip" data-val="Comedy">Comedy</button>' in html
-    assert '<button class="chip" data-val="OK for 5">OK for 5</button>' in html
-    assert '<button class="chip" data-val="Unrated">Unrated</button>' in html
-    # "Unrated" is a neutral pill, not styled as a green age tag.
+    # Dropdown options are checkboxes populated from the data.
+    assert '<input type="checkbox" value="Comedy"><span>Comedy</span>' in html
+    assert '<input type="checkbox" value="OK for 5"><span>OK for 5</span>' in html
+    assert '<input type="checkbox" value="Unrated"><span>Unrated</span>' in html
+    # "Unrated" is a neutral pill in the item body, not a green age tag.
     assert '<span class="g">Unrated</span>' in html
 
 
