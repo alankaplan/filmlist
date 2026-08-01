@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS films (
     award    TEXT    NOT NULL DEFAULT '',
     synopsis TEXT    NOT NULL DEFAULT '',
     tags     TEXT    NOT NULL DEFAULT '',
+    rt_score TEXT    NOT NULL DEFAULT '',
     -- Provenance: 'pull' = fetched by the automated pull system,
     -- 'manual' = entered by hand. The HTML output shows 'pull' only.
     source   TEXT    NOT NULL DEFAULT 'manual',
@@ -40,6 +41,7 @@ class Database:
         "genre": "ALTER TABLE films ADD COLUMN genre TEXT NOT NULL DEFAULT ''",
         "source": "ALTER TABLE films ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'",
         "tags": "ALTER TABLE films ADD COLUMN tags TEXT NOT NULL DEFAULT ''",
+        "rt_score": "ALTER TABLE films ADD COLUMN rt_score TEXT NOT NULL DEFAULT ''",
     }
 
     def __init__(self, path: Path | str = DEFAULT_DB_PATH):
@@ -82,6 +84,7 @@ class Database:
         award    = excluded.award,
         synopsis = excluded.synopsis,
         tags     = excluded.tags,
+        rt_score = excluded.rt_score,
         source   = excluded.source
     """
 
@@ -94,6 +97,7 @@ class Database:
         award    = CASE WHEN films.award    = '' THEN excluded.award    ELSE films.award    END,
         synopsis = CASE WHEN films.synopsis = '' THEN excluded.synopsis ELSE films.synopsis END,
         tags     = CASE WHEN films.tags     = '' THEN excluded.tags     ELSE films.tags     END,
+        rt_score = CASE WHEN films.rt_score = '' THEN excluded.rt_score ELSE films.rt_score END,
         source   = excluded.source
     """
 
@@ -110,9 +114,11 @@ class Database:
         cur = self.conn.execute(
             f"""
             INSERT INTO films (title, year, festival, director, country,
-                               genre, section, award, synopsis, tags, source)
+                               genre, section, award, synopsis, tags, rt_score,
+                               source)
             VALUES (:title, :year, :festival, :director, :country,
-                    :genre, :section, :award, :synopsis, :tags, :source)
+                    :genre, :section, :award, :synopsis, :tags, :rt_score,
+                    :source)
             ON CONFLICT(title, year, festival) DO UPDATE SET
             {set_clause}
             """,
@@ -161,6 +167,7 @@ class Database:
             award=row["award"],
             synopsis=row["synopsis"],
             tags=row["tags"],
+            rt_score=row["rt_score"],
         )
 
     def all(

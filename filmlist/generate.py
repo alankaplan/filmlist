@@ -116,6 +116,10 @@ main {{ max-width: 1000px; margin: 0 auto; padding: 1.5rem; }}
   color: var(--muted); background: var(--chip); border: 1px solid var(--line);
 }}
 .age-chip.age {{ color: #062018; background: var(--age); border-color: var(--age); font-weight: 600; }}
+.rt-chip {{
+  font-size: .72rem; border-radius: 999px; padding: .05rem .5rem; white-space: nowrap;
+  color: #2a0d08; background: #ff6347; border: 1px solid #ff6347; font-weight: 600;
+}}
 .details {{ padding: .1rem .8rem .75rem 1.7rem; }}
 .details .meta {{ color: var(--muted); font-size: .86rem; margin: .3rem 0 0; }}
 .details .meta .fest {{ color: var(--accent); font-weight: 600; }}
@@ -150,6 +154,8 @@ footer {{ color: var(--muted); text-align: center; padding: 2rem 1rem; font-size
           <option value="year-asc">Year (oldest)</option>
           <option value="title-asc">Title (A&ndash;Z)</option>
           <option value="title-desc">Title (Z&ndash;A)</option>
+          <option value="rt-desc">Rating (high)</option>
+          <option value="rt-asc">Rating (low)</option>
         </select>
       </label>
       <span id="count"></span>
@@ -176,18 +182,22 @@ const sortEl = document.getElementById('sort');
 function sortItems() {{
   if (!listEl) return;
   const mode = sortEl.value;
+  const yr = el => +el.dataset.yearSort;
+  const rt = el => +el.dataset.rt;   // -1 when the movie has no Tomatometer
   const cmp = {{
-    'year-desc': (a, b) => (+b.dataset.year - +a.dataset.year) || a.dataset.title.localeCompare(b.dataset.title),
-    'year-asc':  (a, b) => (+a.dataset.year - +b.dataset.year) || a.dataset.title.localeCompare(b.dataset.title),
-    'title-asc': (a, b) => a.dataset.title.localeCompare(b.dataset.title) || (+b.dataset.year - +a.dataset.year),
-    'title-desc':(a, b) => b.dataset.title.localeCompare(a.dataset.title) || (+b.dataset.year - +a.dataset.year),
+    'year-desc': (a, b) => (yr(b) - yr(a)) || a.dataset.title.localeCompare(b.dataset.title),
+    'year-asc':  (a, b) => (yr(a) - yr(b)) || a.dataset.title.localeCompare(b.dataset.title),
+    'title-asc': (a, b) => a.dataset.title.localeCompare(b.dataset.title) || (yr(b) - yr(a)),
+    'title-desc':(a, b) => b.dataset.title.localeCompare(a.dataset.title) || (yr(b) - yr(a)),
+    // Unscored films (rt = -1) always sort to the bottom, either direction.
+    'rt-desc': (a, b) => (rt(b) - rt(a)) || a.dataset.title.localeCompare(b.dataset.title),
+    'rt-asc':  (a, b) => ((rt(a) < 0) - (rt(b) < 0)) || (rt(a) - rt(b)) || a.dataset.title.localeCompare(b.dataset.title),
   }}[mode];
   items.slice().sort(cmp).forEach(el => listEl.appendChild(el));
 }}
 sortEl.addEventListener('change', sortItems);
 
 function itemValues(item, dim) {{
-  if (dim === 'year') return [item.dataset.year];
   return (item.dataset[dim] || '').split('|').filter(Boolean);
 }}
 
@@ -275,20 +285,37 @@ class _Appearance:
     festival: str
     award: str
     section: str
+    year: int
 
 
 @dataclass
 class MergedFilm:
-    """One movie, possibly across several festivals, for display."""
+    """One movie, possibly across several festivals and editions, for display."""
 
     title: str
-    year: int
     director: str = ""
     country: str = ""
     synopsis: str = ""
+    rt_score: str = ""
     genres: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     appearances: list[_Appearance] = field(default_factory=list)
+
+    @property
+    def rt_percent(self) -> int | None:
+        """The Tomatometer as an integer percentage, or None if unknown."""
+        digits = "".join(c for c in self.rt_score if c.isdigit())
+        return int(digits) if digits else None
+
+    @property
+    def year(self) -> int:
+        """The earliest (premiere) year the movie appears under."""
+        return min(a.year for a in self.appearances)
+
+    @property
+    def years(self) -> list[int]:
+        """Every distinct year the movie appears under, ascending."""
+        return sorted({a.year for a in self.appearances})
 
     @property
     def festivals(self) -> list[str]:
@@ -300,16 +327,23 @@ class MergedFilm:
 
 
 def _merge_films(films: Iterable[Film]) -> list[MergedFilm]:
-    """Combine rows for the same movie (title + year) across festivals."""
-    order: list[tuple] = []
-    by_key: dict[tuple, MergedFilm] = {}
+    """Combine rows for the same movie across festivals *and* years.
+
+    Identity is the movie's title (case-folded): a film's stored year is the
+    pull year, which differs between its festival premiere and, say, its Oscar
+    ceremony, so year is deliberately not part of the key. Each row becomes an
+    appearance carrying its own festival/award/year; a movie that recurs under
+    the same festival + award (e.g. from an ambiguous publication date) is
+    collapsed to a single appearance keeping the earliest year."""
+    order: list[str] = []
+    by_key: dict[str, MergedFilm] = {}
     for f in films:
-        key = (f.title.casefold(), f.year)
+        key = f.title.casefold()
         m = by_key.get(key)
         if m is None:
             m = MergedFilm(
-                title=f.title, year=f.year, director=f.director,
-                country=f.country, synopsis=f.synopsis,
+                title=f.title, director=f.director,
+                country=f.country, synopsis=f.synopsis, rt_score=f.rt_score,
                 genres=list(f.genres), tags=list(f.tag_list),
             )
             by_key[key] = m
@@ -318,16 +352,26 @@ def _merge_films(films: Iterable[Film]) -> list[MergedFilm]:
             m.director = m.director or f.director
             m.country = m.country or f.country
             m.synopsis = m.synopsis or f.synopsis
+            m.rt_score = m.rt_score or f.rt_score
             for g in f.genres:
                 if g not in m.genres:
                     m.genres.append(g)
             for t in f.tag_list:
                 if t not in m.tags:
                     m.tags.append(t)
-        m.appearances.append(_Appearance(f.festival, f.award, f.section))
+        m.appearances.append(_Appearance(f.festival, f.award, f.section, f.year))
 
-    # A real age tag on any festival row supersedes "Unrated" from another.
     for m in by_key.values():
+        # Collapse duplicate editions of the same festival+award to one, keeping
+        # the earliest year (e.g. a Cannes winner matched under two pull years).
+        deduped: dict[tuple, _Appearance] = {}
+        for a in m.appearances:
+            k = (a.festival, a.award, a.section)
+            if k not in deduped or a.year < deduped[k].year:
+                deduped[k] = a
+        # Chronological order so the premiere leads and badges read in sequence.
+        m.appearances = sorted(deduped.values(), key=lambda a: (a.year, a.festival))
+        # A real age tag on any festival row supersedes "Unrated" from another.
         if any(t in AGE_TAGS for t in m.tags):
             m.tags = [t for t in m.tags if t != UNRATED]
     return [by_key[k] for k in order]
@@ -335,14 +379,18 @@ def _merge_films(films: Iterable[Film]) -> list[MergedFilm]:
 
 def _render_item(film: MergedFilm) -> str:
     festivals = film.festivals
+    years = film.years
     fest_html = " &middot; ".join(f'<span class="fest">{_esc(f)}</span>' for f in festivals)
     awarded = [a for a in film.appearances if a.award]
+    year_label = str(years[0]) if len(years) == 1 else f"{years[0]}&ndash;{years[-1]}"
+    rt = film.rt_percent
 
     # --- compact one-line summary ---
     trophy = ""
     if awarded:
-        tip = "; ".join(f"{a.award} ({a.festival})" for a in awarded)
+        tip = "; ".join(f"{a.award} ({a.festival} {a.year})" for a in awarded)
         trophy = f'<span class="trophy" title="{_esc(tip)}">🏆</span>'
+    rt_badge = f'<span class="rt-chip" title="Rotten Tomatoes">🍅 {rt}%</span>' if rt is not None else ""
     # Age-related tags (OK for 5/12 or Unrated) sit on the compact line.
     age_badges = "".join(
         f'<span class="age-chip{" age" if t in AGE_TAGS else ""}">{_esc(t)}</span>'
@@ -352,23 +400,24 @@ def _render_item(film: MergedFilm) -> str:
     summary = (
         f'<summary>'
         f'<span class="s-main"><span class="s-title">{_esc(film.title)}</span> '
-        f'<span class="s-sub">&middot; {fest_html} &middot; {film.year}</span></span>'
-        f'<span class="s-badges">{trophy}{age_badges}</span>'
+        f'<span class="s-sub">&middot; {fest_html} &middot; {year_label}</span></span>'
+        f'<span class="s-badges">{rt_badge}{trophy}{age_badges}</span>'
         f'</summary>'
     )
 
     # --- expanded details ---
-    meta_bits = [fest_html, str(film.year)]
+    meta_bits = [fest_html, year_label]
     if film.director:
         meta_bits.append(_esc(film.director))
     if film.country:
         meta_bits.append(_esc(film.country))
+    if rt is not None:
+        meta_bits.append(f'🍅 {rt}%')
     meta = " &middot; ".join(meta_bits)
 
-    multi = len(festivals) > 1
+    # A merged movie can span editions, so each award names its festival + year.
     award_html = "".join(
-        f'<div class="award">🏆 {_esc(a.award)}'
-        f'{f" &mdash; {_esc(a.festival)}" if multi else ""}</div>'
+        f'<div class="award">🏆 {_esc(a.award)} &mdash; {_esc(a.festival)} {a.year}</div>'
         for a in awarded
     )
 
@@ -386,12 +435,15 @@ def _render_item(film: MergedFilm) -> str:
     )
 
     data_festival = _esc("|".join(festivals))
+    data_year = _esc("|".join(str(y) for y in years))
     data_genre = _esc("|".join(film.genres))
     data_tags = _esc("|".join(film.tags))
     return (
         f'<details class="item" data-title="{_esc(film.title)}" '
         f'data-festival="{data_festival}" '
-        f'data-year="{film.year}" data-genre="{data_genre}" data-tags="{data_tags}">'
+        f'data-year="{data_year}" data-year-sort="{film.year}" '
+        f'data-rt="{rt if rt is not None else -1}" '
+        f'data-genre="{data_genre}" data-tags="{data_tags}">'
         f"{summary}{details}</details>"
     )
 
@@ -412,7 +464,7 @@ def render_html(films: Iterable[Film]) -> str:
     years: set[int] = set()
     for m in merged:
         festivals.update(m.festivals)
-        years.add(m.year)
+        years.update(m.years)
         genres.update(m.genres)
         tags.update(m.tags)
 

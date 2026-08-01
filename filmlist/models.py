@@ -36,12 +36,19 @@ class Film:
     award: str = ""         # e.g. "Palme d'Or", "Golden Lion"
     synopsis: str = ""
     tags: str = ""          # comma-separated, e.g. "OK for 12, Cannes pick"
+    rt_score: str = ""      # Rotten Tomatoes Tomatometer, e.g. "85%"
     id: Optional[int] = None
 
     @property
     def genres(self) -> list[str]:
         """The genre string split into individual, trimmed labels."""
         return [g.strip() for g in self.genre.split(",") if g.strip()]
+
+    @property
+    def rt_percent(self) -> Optional[int]:
+        """The Tomatometer as an integer percentage, or None if unknown."""
+        digits = "".join(c for c in self.rt_score if c.isdigit())
+        return int(digits) if digits else None
 
     @property
     def tag_list(self) -> list[str]:

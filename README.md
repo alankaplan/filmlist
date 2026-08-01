@@ -9,8 +9,12 @@ winners from **Cannes, Venice, Berlin, Sundance, SXSW, Toronto, Locarno,**
 **San Sebastián,** and the **Oscars**. The generated page has **additive,
 multi-select filters** for **festival, year, genre, and tags** — pick several
 values in a filter to widen the results, and combine filters to narrow them —
-plus a **Sort** control (by year or title). A film that played several
-festivals is shown as a single item naming each.
+plus a **Sort** control (by year, title, or Rotten Tomatoes rating). A film is
+identified by its title, so a movie that played several festivals — or that
+premiered one year and won an award in another (e.g. an Oscar the following
+season) — is shown as a **single item** that names each festival and year in
+its expanded view. Where Wikidata records it, each film also shows its **Rotten
+Tomatoes Tomatometer** score.
 
 Every film is also **auto-tagged for age appropriateness** — specifically for a
 **5-year-old** and a **12-year-old** — from official **TMDB** age
@@ -98,6 +102,21 @@ to a hand-added film with `add ... --tags "must-watch"`.
 
 > This product uses the TMDB API but is not endorsed or certified by TMDB.
 
+### Rotten Tomatoes scores
+
+Each film shows its **Rotten Tomatoes Tomatometer** where one is available, and
+the page can be **sorted by rating** (high or low; films without a score sort
+last). Rotten Tomatoes has no usable public API, so the score is read from
+**Wikidata** — a "review score" statement (P444) whose "review score by"
+qualifier (P447) is Rotten Tomatoes — in the same `pull` query as everything
+else. No API key is needed. Two caveats:
+
+- **Partial coverage.** Only films whose score an editor has recorded on
+  Wikidata will show one; the rest simply omit the badge.
+- **A snapshot, not live.** It reflects whatever was last entered on Wikidata,
+  not the current Tomatometer, and is a best-effort match (if an item also
+  stores an audience score under the same publisher, one is chosen arbitrarily).
+
 ### Pulling award winners
 
 The app populates itself from Wikidata's "award received" statements and
@@ -120,9 +139,10 @@ Notes:
 - **The Oscars** are pulled as a "festival" too, but only the film-level
   categories (Best Picture, Animated/International/Documentary Feature) — acting
   and directing awards go to people, not films. Oscars are keyed by **ceremony
-  year**, so `pull 2024 --festival Oscars` returns the 2024-ceremony winners
-  (and an Oscar entry lists separately from the film's festival premiere, which
-  is usually a different year).
+  year**, so `pull 2024 --festival Oscars` returns the 2024-ceremony winners.
+  Because the page identifies a film by title, an Oscar winner is **merged into
+  the same item** as its festival premiere (usually the prior year); the
+  expanded view lists each award with its own festival and year.
 - **No API key** is needed.
 - Pulls are **merge-only**: they fill blank fields but never overwrite existing
   data, and re-running only adds newly recorded winners.

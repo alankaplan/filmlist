@@ -59,6 +59,13 @@ def test_tag_list_property():
     assert make_film(tags="").tag_list == []
 
 
+def test_rt_percent_property():
+    assert make_film(rt_score="85%").rt_percent == 85
+    assert make_film(rt_score="100%").rt_percent == 100
+    assert make_film(rt_score="").rt_percent is None
+    assert make_film().rt_percent is None
+
+
 # --- tagging: no certification -> Unrated ---------------------------------
 def test_age_tags_unrated_without_certification():
     # Genre alone never grants a positive tag, whatever the genre.
@@ -240,6 +247,38 @@ def test_migrates_legacy_schema(tmp_path):
         assert db.all(source="pull") == [f for f in db.all() if f.title == "New Film"]
 
 
+def test_db_round_trips_rt_score(tmp_path):
+    with Database(tmp_path / "t.db") as db:
+        fid = db.add(make_film(title="Anora", rt_score="91%"), source="pull")
+        assert db.get(fid).rt_score == "91%"
+
+
+def test_migration_adds_rt_score_column(tmp_path):
+    import sqlite3
+    # A database created before the rt_score column existed.
+    path = tmp_path / "no_rt.db"
+    con = sqlite3.connect(path)
+    con.executescript(
+        """
+        CREATE TABLE films (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL, year INTEGER NOT NULL, festival TEXT NOT NULL,
+            director TEXT DEFAULT '', country TEXT DEFAULT '', genre TEXT DEFAULT '',
+            section TEXT DEFAULT '', award TEXT DEFAULT '', synopsis TEXT DEFAULT '',
+            tags TEXT DEFAULT '', source TEXT DEFAULT 'manual',
+            UNIQUE(title, year, festival)
+        );
+        INSERT INTO films (title, year, festival) VALUES ('Old', 2015, 'Cannes');
+        """
+    )
+    con.commit()
+    con.close()
+    with Database(path) as db:
+        assert db.all()[0].rt_score == ""          # column added, defaults blank
+        fid = db.add(make_film(title="New", rt_score="77%"), source="pull")
+        assert db.get(fid).rt_score == "77%"
+
+
 def test_delete(tmp_path):
     with Database(tmp_path / "t.db") as db:
         fid = db.add(make_film())
@@ -266,6 +305,9 @@ def test_build_query_single_year_and_labels():
     assert '"Palme d\'Or"' in q
     assert "wdt:P136" in q          # genre
     assert "schema:about ?film" in q  # wikipedia article
+    # Rotten Tomatoes Tomatometer via review-score (P444) by RT (P447/Q105584).
+    assert "p:P444" in q
+    assert "pq:P447 wd:Q105584" in q
 
 
 def test_title_from_article():
@@ -287,6 +329,7 @@ SPARQL_SAMPLE = {
                 "article": {"value": "https://en.wikipedia.org/wiki/Anora_(film)"},
                 "tmdb": {"value": "12345"},
                 "imdb": {"value": "tt0000001"},
+                "rt": {"value": "91%"},
             },
             {  # no title -> skipped
                 "award": {"value": "Grand Prix"},
@@ -303,6 +346,7 @@ def test_parse_results_builds_films_titles_and_ids():
     assert films[0].genre == "Comedy, Drama"
     assert films[0].award == "Palme d'Or"
     assert films[0].year == 2024
+    assert films[0].rt_score == "91%"
     assert titles == {0: "Anora (film)"}
     assert ext == {0: ("12345", "tt0000001")}
 
@@ -385,9 +429,10 @@ def test_render_merges_same_film_across_festivals():
                   genre="Drama", award="", tags="OK for 12"),
     ]
     html = render_html(films)
-    # One combined item, listing both festivals in its data + summary.
+    # One combined item, listing both festivals in its data + summary
+    # (appearances are ordered chronologically, then by festival name).
     assert html.count('<details class="item"') == 1
-    assert 'data-festival="Venice|Toronto"' in html
+    assert 'data-festival="Toronto|Venice"' in html
     assert '<span class="fest">Venice</span>' in html
     assert '<span class="fest">Toronto</span>' in html
     # Genres from both rows are unioned onto the one item.
@@ -397,6 +442,58 @@ def test_render_merges_same_film_across_festivals():
     # Both festivals remain selectable in the Festival dropdown.
     assert '<input type="checkbox" value="Venice">' in html
     assert '<input type="checkbox" value="Toronto">' in html
+
+
+def test_render_merges_same_film_across_years():
+    # A film's stored year is its pull year: Cannes 2024 vs the 2025 Oscars
+    # ceremony. Identity is the title, so these merge into one item.
+    films = [
+        make_film(title="Anora", festival="Cannes", year=2024, award="Palme d'Or"),
+        make_film(title="Anora", festival="Oscars", year=2025,
+                  award="Academy Award for Best Picture"),
+    ]
+    html = render_html(films)
+    assert html.count('<details class="item"') == 1
+    # Filterable under either edition's year; sorted/displayed by the earliest.
+    assert 'data-year="2024|2025"' in html
+    assert 'data-year-sort="2024"' in html
+    # Each award names its own festival and year in the expanded view.
+    assert "&mdash; Cannes 2024" in html
+    assert "Academy Award for Best Picture &mdash; Oscars 2025" in html
+    # Both years remain selectable in the Year dropdown.
+    assert '<input type="checkbox" value="2024">' in html
+    assert '<input type="checkbox" value="2025">' in html
+
+
+def test_render_collapses_duplicate_edition_of_same_award():
+    # The same Cannes win matched under two pull years (e.g. EO, whose award
+    # statement lacks a point-in-time qualifier) collapses to one appearance.
+    films = [
+        make_film(title="EO", festival="Cannes", year=2022, award="Jury Prize"),
+        make_film(title="EO", festival="Cannes", year=2023, award="Jury Prize"),
+    ]
+    html = render_html(films)
+    assert html.count('<details class="item"') == 1
+    # One award badge, keeping the earliest year; no duplicate 2023 badge.
+    assert html.count("Jury Prize &mdash; Cannes") == 1
+    assert "Jury Prize &mdash; Cannes 2022" in html
+    assert "1 films across 1 festivals" in html
+
+
+def test_render_shows_rotten_tomatoes_badge_and_sort():
+    films = [
+        make_film(title="Anora", festival="Cannes", year=2024, rt_score="91%"),
+        make_film(title="Flow", festival="Sundance", year=2024),  # no RT score
+    ]
+    html = render_html(films)
+    # Scored film carries a numeric data-rt and shows a Tomatometer chip.
+    assert 'data-rt="91"' in html
+    assert "🍅 91%" in html
+    # Unscored film sorts last via data-rt="-1".
+    assert 'data-rt="-1"' in html
+    # Rating sort options are offered.
+    assert 'value="rt-desc"' in html
+    assert 'value="rt-asc"' in html
 
 
 def test_render_html_escapes():

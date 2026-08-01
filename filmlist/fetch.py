@@ -113,6 +113,7 @@ SELECT ?award ?filmLabel ?article
        (SAMPLE(?descRaw) AS ?description)
        (SAMPLE(?tmdbId) AS ?tmdb)
        (SAMPLE(?imdbId) AS ?imdb)
+       (SAMPLE(?rtScore) AS ?rt)
        (GROUP_CONCAT(DISTINCT ?directorLabel; separator=", ") AS ?directors)
        (GROUP_CONCAT(DISTINCT ?countryLabel;  separator=", ") AS ?countries)
        (GROUP_CONCAT(DISTINCT ?genreLabel;    separator=", ") AS ?genres)
@@ -134,6 +135,12 @@ WHERE {{
   OPTIONAL {{ ?film schema:description ?descRaw . FILTER(LANG(?descRaw)="en") }}
   OPTIONAL {{ ?film wdt:P4947 ?tmdbId . }}
   OPTIONAL {{ ?film wdt:P345 ?imdbId . }}
+  # Rotten Tomatoes Tomatometer: a review score (P444) whose "review score by"
+  # qualifier (P447) is Rotten Tomatoes (wd:Q105584). Best-effort — if the item
+  # also stores an audience score under the same publisher, SAMPLE picks one.
+  OPTIONAL {{ ?film p:P444 ?rtStat .
+             ?rtStat ps:P444 ?rtScore ;
+                     pq:P447 wd:Q105584 . }}
   OPTIONAL {{ ?article schema:about ?film ;
                        schema:isPartOf <https://en.wikipedia.org/> . }}
   ?film rdfs:label ?filmLabel . FILTER(LANG(?filmLabel)="en")
@@ -176,6 +183,7 @@ def _parse_results(
                 genre=binding.get("genres", {}).get("value", "").strip(),
                 award=award,
                 synopsis=description,  # provisional; upgraded from Wikipedia
+                rt_score=binding.get("rt", {}).get("value", "").strip(),
             )
         except ValueError:
             continue
