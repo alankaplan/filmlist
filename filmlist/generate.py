@@ -77,6 +77,12 @@ main {{ max-width: 1000px; margin: 0 auto; padding: 1.5rem; }}
 .dd-opt:hover {{ background: var(--chip); }}
 .dd-opt input {{ accent-color: var(--accent); width: 1rem; height: 1rem; }}
 .toolbar {{ display: flex; align-items: center; gap: 1rem; margin-top: 1rem; padding-top: .8rem; border-top: 1px solid var(--line); }}
+.sortbox {{ color: var(--muted); font-size: .82rem; display: inline-flex; align-items: center; gap: .4rem; }}
+.sortbox select {{
+  background: var(--chip); color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: .3rem .5rem; font-size: .82rem;
+}}
+.sortbox select:focus {{ outline: none; border-color: var(--accent); }}
 #count {{ color: var(--muted); font-size: .9rem; }}
 #clear {{
   margin-left: auto; background: none; border: 1px solid var(--line); color: var(--muted);
@@ -138,6 +144,14 @@ footer {{ color: var(--muted); text-align: center; padding: 2rem 1rem; font-size
   <div class="controls">
     <div class="facets">{facets}</div>
     <div class="toolbar">
+      <label class="sortbox">Sort
+        <select id="sort">
+          <option value="year-desc">Year (newest)</option>
+          <option value="year-asc">Year (oldest)</option>
+          <option value="title-asc">Title (A&ndash;Z)</option>
+          <option value="title-desc">Title (Z&ndash;A)</option>
+        </select>
+      </label>
       <span id="count"></span>
       <button id="clear">Clear filters</button>
     </div>
@@ -156,6 +170,21 @@ const active = {{festival: new Set(), year: new Set(), genre: new Set(), tags: n
 const items = Array.from(document.querySelectorAll('.item'));
 const countEl = document.getElementById('count');
 const noResults = document.getElementById('noresults');
+const listEl = document.querySelector('.list');
+const sortEl = document.getElementById('sort');
+
+function sortItems() {{
+  if (!listEl) return;
+  const mode = sortEl.value;
+  const cmp = {{
+    'year-desc': (a, b) => (+b.dataset.year - +a.dataset.year) || a.dataset.title.localeCompare(b.dataset.title),
+    'year-asc':  (a, b) => (+a.dataset.year - +b.dataset.year) || a.dataset.title.localeCompare(b.dataset.title),
+    'title-asc': (a, b) => a.dataset.title.localeCompare(b.dataset.title) || (+b.dataset.year - +a.dataset.year),
+    'title-desc':(a, b) => b.dataset.title.localeCompare(a.dataset.title) || (+b.dataset.year - +a.dataset.year),
+  }}[mode];
+  items.slice().sort(cmp).forEach(el => listEl.appendChild(el));
+}}
+sortEl.addEventListener('change', sortItems);
 
 function itemValues(item, dim) {{
   if (dim === 'year') return [item.dataset.year];
@@ -215,6 +244,7 @@ document.getElementById('clear').addEventListener('click', () => {{
   apply();
 }});
 
+sortItems();
 apply();
 </script>
 </body>
@@ -359,7 +389,8 @@ def _render_item(film: MergedFilm) -> str:
     data_genre = _esc("|".join(film.genres))
     data_tags = _esc("|".join(film.tags))
     return (
-        f'<details class="item" data-festival="{data_festival}" '
+        f'<details class="item" data-title="{_esc(film.title)}" '
+        f'data-festival="{data_festival}" '
         f'data-year="{film.year}" data-genre="{data_genre}" data-tags="{data_tags}">'
         f"{summary}{details}</details>"
     )

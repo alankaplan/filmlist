@@ -33,9 +33,6 @@ USER_AGENT = "filmlist/0.2 (https://github.com/alankaplan/filmlist)"
 # bundle (in addition to the system store) lets HTTPS verification succeed.
 _PROXY_CA_BUNDLE = "/root/.ccr/ca-bundle.crt"
 
-# How many characters of a Wikipedia intro we keep for a card summary.
-_SUMMARY_LIMIT = 360
-
 # Each festival maps to the English labels of the awards we pull. Matching is
 # against Wikidata's exact label or alias (skos:altLabel), so a label that
 # doesn't match returns nothing rather than erroring — edit freely to add or
@@ -82,6 +79,14 @@ FESTIVAL_AWARDS: dict[str, list[str]] = {
     "San Sebastian": [
         "Golden Shell",
         "Silver Shell for Best Director",
+    ],
+    # Only film-level Academy Awards attach to the film (Wikidata P166);
+    # acting/directing categories are awarded to people, not films.
+    "Oscars": [
+        "Academy Award for Best Picture",
+        "Academy Award for Best Animated Feature",
+        "Academy Award for Best International Feature Film",
+        "Academy Award for Best Documentary Feature",
     ],
     # Telluride is non-competitive — no jury award to query.
 }
@@ -191,12 +196,9 @@ def _parse_results(
 # ---------------------------------------------------------------------------
 # Wikipedia summaries
 # ---------------------------------------------------------------------------
-def _truncate(text: str, limit: int = _SUMMARY_LIMIT) -> str:
-    text = " ".join(text.split())
-    if len(text) <= limit:
-        return text
-    cut = text[:limit].rsplit(" ", 1)[0]
-    return cut.rstrip(".,;: ") + "…"
+def _clean(text: str) -> str:
+    """Collapse whitespace; the full intro is kept (shown in the detail view)."""
+    return " ".join(text.split())
 
 
 def fetch_summaries(
@@ -233,7 +235,7 @@ def fetch_summaries(
             resolved = redir.get(norm.get(t, t), norm.get(t, t))
             extract = by_title.get(resolved, "")
             if extract:
-                out[t] = _truncate(extract)
+                out[t] = _clean(extract)
     return out
 
 

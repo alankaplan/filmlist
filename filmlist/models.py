@@ -18,6 +18,7 @@ FESTIVALS = [
     "Locarno",
     "San Sebastian",
     "Telluride",
+    "Oscars",
 ]
 
 

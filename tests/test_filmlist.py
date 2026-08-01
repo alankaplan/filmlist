@@ -26,7 +26,7 @@ def make_film(**kw) -> Film:
 # --- models ---------------------------------------------------------------
 def test_film_validation_rejects_unknown_festival():
     with pytest.raises(ValueError):
-        make_film(festival="Oscars")
+        make_film(festival="Golden Globes")
 
 
 def test_film_validation_rejects_empty_title():
@@ -42,6 +42,10 @@ def test_film_validation_rejects_bad_year():
 def test_sxsw_is_a_valid_festival():
     f = make_film(festival="SXSW")
     assert f.festival == "SXSW"
+
+
+def test_oscars_is_a_valid_festival():
+    assert make_film(festival="Oscars").festival == "Oscars"
 
 
 def test_genres_property_splits_and_trims():
@@ -250,9 +254,10 @@ def test_every_festival_has_awards():
         assert awards, f"{fest} has no awards mapped"
 
 
-def test_sundance_and_sxsw_are_mapped():
+def test_sundance_sxsw_and_oscars_are_mapped():
     assert "Sundance" in FESTIVAL_AWARDS
     assert "SXSW" in FESTIVAL_AWARDS
+    assert "Academy Award for Best Picture" in FESTIVAL_AWARDS["Oscars"]
 
 
 def test_build_query_single_year_and_labels():
@@ -332,6 +337,14 @@ def test_fetch_summaries_resolves_redirects():
     assert out["Old Title"] == "Extract text."
 
 
+def test_fetch_summaries_keeps_full_text():
+    long_extract = "Sentence. " * 100  # ~1000 chars, far past the old 360 cap
+    sample = {"query": {"pages": {"1": {"title": "Film", "extract": long_extract}}}}
+    out = fetch_summaries(["Film"], fetcher=lambda e, p: sample)
+    assert out["Film"] == long_extract.strip()
+    assert "…" not in out["Film"]          # no truncation ellipsis
+
+
 # --- html rendering -------------------------------------------------------
 def test_render_html_has_four_multiselect_facets_and_data():
     films = [
@@ -358,6 +371,10 @@ def test_render_html_has_four_multiselect_facets_and_data():
     assert '<input type="checkbox" value="Unrated"><span>Unrated</span>' in html
     # "Unrated" is a neutral pill in the item body, not a green age tag.
     assert '<span class="g">Unrated</span>' in html
+    # A sort control is present and items carry a title for sorting.
+    assert '<select id="sort">' in html
+    assert 'value="title-asc"' in html
+    assert 'data-title="Anora"' in html
 
 
 def test_render_merges_same_film_across_festivals():

@@ -5,10 +5,12 @@ festivals and generates a self-contained, filterable HTML page from it.
 
 Every film shown on the page is fetched automatically from **Wikidata** (with
 plot summaries from **Wikipedia**) — nothing is hand-authored. It covers award
-winners from **Cannes, Venice, Berlin, Sundance, SXSW, Toronto, Locarno,** and
-**San Sebastián**. The generated page has **additive, multi-select filters**
-for **festival, year, genre, and tags** — pick several values in a filter to
-widen the results, and combine filters to narrow them.
+winners from **Cannes, Venice, Berlin, Sundance, SXSW, Toronto, Locarno,**
+**San Sebastián,** and the **Oscars**. The generated page has **additive,
+multi-select filters** for **festival, year, genre, and tags** — pick several
+values in a filter to widen the results, and combine filters to narrow them —
+plus a **Sort** control (by year or title). A film that played several
+festivals is shown as a single item naming each.
 
 Every film is also **auto-tagged for age appropriateness** — specifically for a
 **5-year-old** and a **12-year-old** — from official **TMDB** age
@@ -115,6 +117,12 @@ Notes:
   Prix, Jury Prize, Best Director, Best Screenplay). The award list lives in
   `FESTIVAL_AWARDS` in `filmlist/fetch.py` and is easy to extend — awards are
   matched by English label or alias, case-insensitively.
+- **The Oscars** are pulled as a "festival" too, but only the film-level
+  categories (Best Picture, Animated/International/Documentary Feature) — acting
+  and directing awards go to people, not films. Oscars are keyed by **ceremony
+  year**, so `pull 2024 --festival Oscars` returns the 2024-ceremony winners
+  (and an Oscar entry lists separately from the film's festival premiere, which
+  is usually a different year).
 - **No API key** is needed.
 - Pulls are **merge-only**: they fill blank fields but never overwrite existing
   data, and re-running only adds newly recorded winners.
@@ -123,6 +131,9 @@ Notes:
   `--include-manual`.
 - Requires outbound HTTPS. In restricted network environments the command
   fails with a clear message instead of a traceback.
+- Each film's **full Wikipedia intro** is stored as its description (shown when
+  a row is expanded). Descriptions are saved at pull time, so films pulled by an
+  older version keep their truncated text until you re-run `pull`.
 - This fetches *award winners*, not full official selections — complete
   lineups live in Wikipedia tables and would need a separate, per-festival
   parser.
