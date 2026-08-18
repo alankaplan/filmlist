@@ -16,6 +16,12 @@ season) — is shown as a **single item** that names each festival and year in
 its expanded view. Where Wikidata records it, each film also shows its **Rotten
 Tomatoes Tomatometer** score.
 
+You can **mark films as watched** right on the page — a toggle on each row —
+and a **Show** control views All / Unwatched / Watched with a running watched
+count. Watched state is saved in your **browser** (`localStorage`), so it
+survives reloads and page regeneration but is per-device and never leaves your
+machine (nothing is synced or committed).
+
 Every film is also **auto-tagged for age appropriateness** — specifically for a
 **5-year-old** and a **12-year-old** — from official **TMDB** age
 certifications (refined by content keywords). Films with no certification are

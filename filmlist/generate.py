@@ -120,6 +120,22 @@ main {{ max-width: 1000px; margin: 0 auto; padding: 1.5rem; }}
   font-size: .72rem; border-radius: 999px; padding: .05rem .5rem; white-space: nowrap;
   color: #2a0d08; background: #ff6347; border: 1px solid #ff6347; font-weight: 600;
 }}
+/* Per-film watched toggle (client-side, persisted in localStorage). */
+.watch-btn {{
+  font: inherit; font-size: .7rem; cursor: pointer; white-space: nowrap;
+  border-radius: 999px; padding: .05rem .55rem; line-height: 1.4;
+  color: var(--muted); background: var(--chip); border: 1px solid var(--line);
+}}
+.watch-btn:hover {{ border-color: var(--accent); color: var(--text); }}
+.watch-btn .w-on {{ display: none; }}
+.item.watched .watch-btn {{
+  color: #062018; background: var(--age); border-color: var(--age); font-weight: 600;
+}}
+.item.watched .watch-btn .w-off {{ display: none; }}
+.item.watched .watch-btn .w-on {{ display: inline; }}
+/* Watched rows recede a little so the list reads as "done vs to-watch". */
+.item.watched > summary .s-title {{ opacity: .55; text-decoration: line-through; }}
+.item.watched > summary .s-sub {{ opacity: .55; }}
 .details {{ padding: .1rem .8rem .75rem 1.7rem; }}
 .details .meta {{ color: var(--muted); font-size: .86rem; margin: .3rem 0 0; }}
 .details .meta .fest {{ color: var(--accent); font-weight: 600; }}
@@ -158,6 +174,13 @@ footer {{ color: var(--muted); text-align: center; padding: 2rem 1rem; font-size
           <option value="rt-asc">Rating (low)</option>
         </select>
       </label>
+      <label class="sortbox">Show
+        <select id="watched-filter">
+          <option value="all">All</option>
+          <option value="unwatched">Unwatched</option>
+          <option value="watched">Watched</option>
+        </select>
+      </label>
       <span id="count"></span>
       <button id="clear">Clear filters</button>
     </div>
@@ -178,6 +201,41 @@ const countEl = document.getElementById('count');
 const noResults = document.getElementById('noresults');
 const listEl = document.querySelector('.list');
 const sortEl = document.getElementById('sort');
+const watchedFilterEl = document.getElementById('watched-filter');
+
+// --- watched state, persisted per-browser in localStorage -----------------
+const WATCHED_STORE = 'filmlist:watched';
+function loadWatched() {{
+  try {{ return new Set(JSON.parse(localStorage.getItem(WATCHED_STORE) || '[]')); }}
+  catch (e) {{ return new Set(); }}
+}}
+function saveWatched() {{
+  try {{ localStorage.setItem(WATCHED_STORE, JSON.stringify([...watched])); }}
+  catch (e) {{ /* storage unavailable (private mode); session-only */ }}
+}}
+const watched = loadWatched();
+
+function reflectWatched(item) {{
+  const on = watched.has(item.dataset.watchKey);
+  item.classList.toggle('watched', on);
+  const btn = item.querySelector('.watch-btn');
+  if (btn) btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+}}
+items.forEach(item => {{
+  reflectWatched(item);
+  const btn = item.querySelector('.watch-btn');
+  if (!btn) return;
+  btn.addEventListener('click', e => {{
+    // Inside <summary>, so keep the click from expanding the row.
+    e.preventDefault();
+    e.stopPropagation();
+    const key = item.dataset.watchKey;
+    if (watched.has(key)) watched.delete(key); else watched.add(key);
+    saveWatched();
+    reflectWatched(item);
+    apply();
+  }});
+}});
 
 function sortItems() {{
   if (!listEl) return;
@@ -202,18 +260,25 @@ function itemValues(item, dim) {{
 }}
 
 function apply() {{
-  let visible = 0;
+  const view = watchedFilterEl.value;   // all | unwatched | watched
+  let visible = 0, watchedTotal = 0;
   items.forEach(item => {{
-    const ok = DIMS.every(dim => {{
+    const facetOk = DIMS.every(dim => {{
       const sel = active[dim];
       return sel.size === 0 || itemValues(item, dim).some(v => sel.has(v));
     }});
+    const isWatched = watched.has(item.dataset.watchKey);
+    if (isWatched) watchedTotal++;
+    const viewOk = view === 'all' || (view === 'watched') === isWatched;
+    const ok = facetOk && viewOk;
     item.style.display = ok ? '' : 'none';
     if (ok) visible++;
   }});
-  countEl.textContent = visible + ' of ' + items.length + ' films';
+  countEl.textContent =
+    visible + ' of ' + items.length + ' films \\u00b7 ' + watchedTotal + ' watched';
   noResults.style.display = visible ? 'none' : '';
 }}
+watchedFilterEl.addEventListener('change', apply);
 
 const dropdowns = Array.from(document.querySelectorAll('.dd'));
 
@@ -397,11 +462,16 @@ def _render_item(film: MergedFilm) -> str:
         for t in film.tags
         if t in AGE_TAGS or t == UNRATED
     )
+    watch_btn = (
+        '<button class="watch-btn" type="button" aria-pressed="false" '
+        'title="Mark as watched"><span class="w-off">+ Watchlist</span>'
+        '<span class="w-on">✓ Watched</span></button>'
+    )
     summary = (
         f'<summary>'
         f'<span class="s-main"><span class="s-title">{_esc(film.title)}</span> '
         f'<span class="s-sub">&middot; {fest_html} &middot; {year_label}</span></span>'
-        f'<span class="s-badges">{rt_badge}{trophy}{age_badges}</span>'
+        f'<span class="s-badges">{watch_btn}{rt_badge}{trophy}{age_badges}</span>'
         f'</summary>'
     )
 
@@ -440,6 +510,7 @@ def _render_item(film: MergedFilm) -> str:
     data_tags = _esc("|".join(film.tags))
     return (
         f'<details class="item" data-title="{_esc(film.title)}" '
+        f'data-watch-key="{_esc(film.title.casefold())}" '
         f'data-festival="{data_festival}" '
         f'data-year="{data_year}" data-year-sort="{film.year}" '
         f'data-rt="{rt if rt is not None else -1}" '

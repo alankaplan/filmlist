@@ -421,6 +421,20 @@ def test_render_html_has_four_multiselect_facets_and_data():
     assert 'data-title="Anora"' in html
 
 
+def test_render_has_watched_toggle_and_persistence():
+    html = render_html([make_film(title="Anora", festival="Cannes", year=2024)])
+    # Each item carries a stable watch key (its case-folded title) and a toggle.
+    assert 'data-watch-key="anora"' in html
+    assert '<button class="watch-btn"' in html
+    # The Show control offers All / Unwatched / Watched.
+    assert '<select id="watched-filter">' in html
+    assert '<option value="unwatched">Unwatched</option>' in html
+    assert '<option value="watched">Watched</option>' in html
+    # Watched state is persisted in the browser under a localStorage key.
+    assert "filmlist:watched" in html
+    assert "localStorage" in html
+
+
 def test_render_merges_same_film_across_festivals():
     films = [
         make_film(title="Poor Things", festival="Venice", year=2023,
