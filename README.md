@@ -110,18 +110,20 @@ to a hand-added film with `add ... --tags "must-watch"`.
 
 ### Rotten Tomatoes scores
 
-Each film shows its **Rotten Tomatoes Tomatometer** where one is available, and
-the page can be **sorted by rating** (high or low; films without a score sort
-last). Rotten Tomatoes has no usable public API, so the score is read from
-**Wikidata** — a "review score" statement (P444) whose "review score by"
-qualifier (P447) is Rotten Tomatoes — in the same `pull` query as everything
-else. No API key is needed. Two caveats:
+Each film shows its **Rotten Tomatoes Tomatometer** percentage where one is
+available, and the page can be **sorted by rating** (high or low; films without
+a score sort last). Rotten Tomatoes has no usable public API, so the score is
+read from **Wikidata** — a "review score" statement (P444) whose "review score
+by" qualifier (P447) is Rotten Tomatoes — in the same `pull` query as everything
+else. A film often carries a second such statement for the critics' *average
+rating* (e.g. `8.4/10`); the query keeps only the percentage form, so it's the
+Tomatometer that's shown, never the average. No API key is needed. Two caveats:
 
-- **Partial coverage.** Only films whose score an editor has recorded on
+- **Partial coverage.** Only films whose Tomatometer an editor has recorded on
   Wikidata will show one; the rest simply omit the badge.
 - **A snapshot, not live.** It reflects whatever was last entered on Wikidata,
-  not the current Tomatometer, and is a best-effort match (if an item also
-  stores an audience score under the same publisher, one is chosen arbitrarily).
+  not the current Tomatometer. The score is stored at pull time, so films pulled
+  by an older version keep their value until you re-run `pull <year>`.
 
 ### Pulling award winners
 

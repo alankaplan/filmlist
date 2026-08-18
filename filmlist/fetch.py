@@ -136,11 +136,13 @@ WHERE {{
   OPTIONAL {{ ?film wdt:P4947 ?tmdbId . }}
   OPTIONAL {{ ?film wdt:P345 ?imdbId . }}
   # Rotten Tomatoes Tomatometer: a review score (P444) whose "review score by"
-  # qualifier (P447) is Rotten Tomatoes (wd:Q105584). Best-effort — if the item
-  # also stores an audience score under the same publisher, SAMPLE picks one.
+  # qualifier (P447) is Rotten Tomatoes (wd:Q105584). An item often also stores
+  # the critics' *average rating* ("8.4/10") under the same publisher; the "%"
+  # filter keeps only the Tomatometer percentage.
   OPTIONAL {{ ?film p:P444 ?rtStat .
              ?rtStat ps:P444 ?rtScore ;
-                     pq:P447 wd:Q105584 . }}
+                     pq:P447 wd:Q105584 .
+             FILTER(CONTAINS(STR(?rtScore), "%")) }}
   OPTIONAL {{ ?article schema:about ?film ;
                        schema:isPartOf <https://en.wikipedia.org/> . }}
   ?film rdfs:label ?filmLabel . FILTER(LANG(?filmLabel)="en")

@@ -2,8 +2,29 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, asdict
 from typing import Optional
+
+
+def parse_rt_percent(text: str) -> Optional[int]:
+    """Parse a Rotten Tomatoes Tomatometer string to an int 0–100, else None.
+
+    Accepts a percentage ('83%', '83.0%'), an 'N/100' form, or a bare integer
+    0–100. Rejects the critics' *average rating* ('8.4/10') and anything out of
+    range, so a stale or wrong value renders no badge rather than a bogus one."""
+    s = (text or "").strip()
+    if not s:
+        return None
+    m = re.match(r"(\d{1,3})(?:\.\d+)?\s*%", s)          # '83%', '83.0%'
+    if not m:
+        m = re.match(r"(\d{1,3})\s*/\s*100\b", s)         # 'N/100'
+    if not m and s.isdigit():                             # bare integer
+        m = re.match(r"(\d{1,3})$", s)
+    if not m:
+        return None
+    value = int(m.group(1))
+    return value if 0 <= value <= 100 else None
 
 
 # The major international film festivals we track. Keeping this as a canonical
@@ -47,8 +68,7 @@ class Film:
     @property
     def rt_percent(self) -> Optional[int]:
         """The Tomatometer as an integer percentage, or None if unknown."""
-        digits = "".join(c for c in self.rt_score if c.isdigit())
-        return int(digits) if digits else None
+        return parse_rt_percent(self.rt_score)
 
     @property
     def tag_list(self) -> list[str]:

@@ -62,8 +62,17 @@ def test_tag_list_property():
 def test_rt_percent_property():
     assert make_film(rt_score="85%").rt_percent == 85
     assert make_film(rt_score="100%").rt_percent == 100
+    assert make_film(rt_score="83.0%").rt_percent == 83
+    assert make_film(rt_score="91/100").rt_percent == 91
+    assert make_film(rt_score="94").rt_percent == 94
     assert make_film(rt_score="").rt_percent is None
     assert make_film().rt_percent is None
+    # Regression: the critics' average rating must not be read as a percentage.
+    assert make_film(rt_score="8.4/10").rt_percent is None
+    assert make_film(rt_score="8.30/10").rt_percent is None
+    assert make_film(rt_score="7.0/10.0").rt_percent is None
+    # Out-of-range values are rejected rather than shown.
+    assert make_film(rt_score="120%").rt_percent is None
 
 
 # --- tagging: no certification -> Unrated ---------------------------------
@@ -305,9 +314,11 @@ def test_build_query_single_year_and_labels():
     assert '"Palme d\'Or"' in q
     assert "wdt:P136" in q          # genre
     assert "schema:about ?film" in q  # wikipedia article
-    # Rotten Tomatoes Tomatometer via review-score (P444) by RT (P447/Q105584).
+    # Rotten Tomatoes Tomatometer via review-score (P444) by RT (P447/Q105584),
+    # restricted to the percentage form so the average rating isn't picked up.
     assert "p:P444" in q
     assert "pq:P447 wd:Q105584" in q
+    assert 'CONTAINS(STR(?rtScore), "%")' in q
 
 
 def test_title_from_article():

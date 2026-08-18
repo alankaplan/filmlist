@@ -15,7 +15,7 @@ from datetime import date
 from pathlib import Path
 from typing import Iterable
 
-from .models import Film
+from .models import Film, parse_rt_percent
 from .tagging import AGE_TAGS, UNRATED
 
 PAGE_TEMPLATE = """<!doctype html>
@@ -369,8 +369,7 @@ class MergedFilm:
     @property
     def rt_percent(self) -> int | None:
         """The Tomatometer as an integer percentage, or None if unknown."""
-        digits = "".join(c for c in self.rt_score if c.isdigit())
-        return int(digits) if digits else None
+        return parse_rt_percent(self.rt_score)
 
     @property
     def year(self) -> int:
