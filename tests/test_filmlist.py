@@ -208,6 +208,26 @@ def test_merge_preserves_curated_fields(tmp_path):
         assert got.section == "Competition"       # preserved
         assert got.director == "Sean Baker"       # filled
         assert got.genre == "Comedy"              # filled
+        # A pull can't convert a hand-curated row: it stays 'manual'.
+        assert db.all(source="manual")[0].title == "Anora"
+
+
+def test_repull_refreshes_pulled_fields(tmp_path):
+    with Database(tmp_path / "t.db") as db:
+        # A film pulled by an older version: truncated synopsis, bad RT score.
+        db.add(make_film(title="Below the Clouds", year=2025, festival="Locarno",
+                         synopsis="Below the Clouds is a 2025 film about the island of",
+                         rt_score="8.4/10"),
+               merge=True, source="pull")
+        # Re-pulling the same film brings the full synopsis and correct score.
+        fresh = make_film(title="Below the Clouds", year=2025, festival="Locarno",
+                          synopsis="Below the Clouds is a 2025 Italian documentary "
+                          "film directed by Gianfranco Rosi, an homage to Naples.",
+                          rt_score="95%")
+        db.add(fresh, merge=True, source="pull")
+        got = db.all()[0]
+        assert got.synopsis == fresh.synopsis     # refreshed, not preserved
+        assert got.rt_score == "95%"              # refreshed
 
 
 def test_retag_strips_obsolete_age_tags_and_keeps_custom(tmp_path):

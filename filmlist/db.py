@@ -88,17 +88,23 @@ class Database:
         source   = excluded.source
     """
 
-    # Fill only fields that are currently blank, preserving curated data.
+    # Used by `pull`. Refresh the automatically-fetched fields on an existing
+    # PULL row (so a re-pull picks up a fuller synopsis, a corrected rating,
+    # etc.), but never clobber a hand-curated MANUAL row: for those, a non-blank
+    # value is preserved and only blank fields are filled. Manual rows also keep
+    # their 'manual' source, so an automated pull can't alter them on any run.
     _UPSERT_MERGE = """
-        director = CASE WHEN films.director = '' THEN excluded.director ELSE films.director END,
-        country  = CASE WHEN films.country  = '' THEN excluded.country  ELSE films.country  END,
-        genre    = CASE WHEN films.genre    = '' THEN excluded.genre    ELSE films.genre    END,
-        section  = CASE WHEN films.section  = '' THEN excluded.section  ELSE films.section  END,
-        award    = CASE WHEN films.award    = '' THEN excluded.award    ELSE films.award    END,
-        synopsis = CASE WHEN films.synopsis = '' THEN excluded.synopsis ELSE films.synopsis END,
-        tags     = CASE WHEN films.tags     = '' THEN excluded.tags     ELSE films.tags     END,
-        rt_score = CASE WHEN films.rt_score = '' THEN excluded.rt_score ELSE films.rt_score END,
-        source   = excluded.source
+        director = CASE WHEN films.source='manual' AND films.director != '' THEN films.director ELSE excluded.director END,
+        country  = CASE WHEN films.source='manual' AND films.country  != '' THEN films.country  ELSE excluded.country  END,
+        genre    = CASE WHEN films.source='manual' AND films.genre    != '' THEN films.genre    ELSE excluded.genre    END,
+        section  = CASE WHEN films.source='manual' AND films.section  != '' THEN films.section  ELSE excluded.section  END,
+        award    = CASE WHEN films.source='manual' AND films.award    != '' THEN films.award    ELSE excluded.award    END,
+        synopsis = CASE WHEN films.source='manual' AND films.synopsis != '' THEN films.synopsis ELSE excluded.synopsis END,
+        rt_score = CASE WHEN films.source='manual' AND films.rt_score != '' THEN films.rt_score ELSE excluded.rt_score END,
+        -- Tags are fill-blank only: a keyless re-pull would otherwise downgrade
+        -- good rating-based age tags to 'Unrated'. Manage tags via `retag`.
+        tags     = CASE WHEN films.tags = '' THEN excluded.tags ELSE films.tags END,
+        source   = CASE WHEN films.source='manual' THEN films.source ELSE excluded.source END
     """
 
     def add(self, film: Film, merge: bool = False, source: str = "manual") -> int:

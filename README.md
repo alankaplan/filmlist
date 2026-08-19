@@ -122,8 +122,8 @@ Tomatometer that's shown, never the average. No API key is needed. Two caveats:
 - **Partial coverage.** Only films whose Tomatometer an editor has recorded on
   Wikidata will show one; the rest simply omit the badge.
 - **A snapshot, not live.** It reflects whatever was last entered on Wikidata,
-  not the current Tomatometer. The score is stored at pull time, so films pulled
-  by an older version keep their value until you re-run `pull <year>`.
+  not the current Tomatometer. The score is stored at pull time; re-running
+  `pull <year>` refreshes it (and corrects any value from an older version).
 
 ### Pulling award winners
 
@@ -152,16 +152,21 @@ Notes:
   the same item** as its festival premiere (usually the prior year); the
   expanded view lists each award with its own festival and year.
 - **No API key** is needed.
-- Pulls are **merge-only**: they fill blank fields but never overwrite existing
-  data, and re-running only adds newly recorded winners.
+- **Re-running `pull` refreshes** a film's fetched fields (synopsis, genre,
+  director, country, award, Rotten Tomatoes score), so a fuller Wikipedia intro
+  or a corrected rating replaces the old value — and new winners are added.
+  Hand-added (`manual`) films are never overwritten: their non-blank fields and
+  `manual` source are preserved on every pull. (Age **tags** are the one
+  exception — a re-pull only sets them when they're blank, so a keyless pull
+  can't downgrade good rating-based tags; use `retag` to manage tags.)
 - The generated page shows **only automatically pulled films**. Hand-added
   films (`add`) are stored with a `manual` source and omitted unless you pass
   `--include-manual`.
 - Requires outbound HTTPS. In restricted network environments the command
   fails with a clear message instead of a traceback.
 - Each film's **full Wikipedia intro** is stored as its description (shown when
-  a row is expanded). Descriptions are saved at pull time, so films pulled by an
-  older version keep their truncated text until you re-run `pull`.
+  a row is expanded). If a film was pulled by an older version with a truncated
+  description, just re-run `pull <year>` to replace it with the full text.
 - This fetches *award winners*, not full official selections — complete
   lineups live in Wikipedia tables and would need a separate, per-festival
   parser.
